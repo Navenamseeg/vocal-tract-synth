@@ -1,0 +1,19 @@
+Vocal Tract Synth - installing on a Mac
+
+1. Copy the plug-ins into place (Finder > Go > Go to Folder...):
+   Vocal Tract Synth.vst3       ->  ~/Library/Audio/Plug-Ins/VST3/
+   Vocal Tract Synth.component  ->  ~/Library/Audio/Plug-Ins/Components/
+
+2. These builds are not signed by Apple, so macOS blocks them at first.
+   Open Terminal and paste this one line, then press Return:
+
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Vocal Tract Synth.vst3" ~/Library/Audio/Plug-Ins/Components/"Vocal Tract Synth.component"
+
+3. In Ableton Live: Settings > Plug-Ins, turn on "Use VST3 Plug-In System Folders"
+   and "Use Audio Units", then press Rescan. It shows up under Plug-Ins > Evan Geesman.
+
+4. For an MPE controller: right-click the plug-in's title bar in Live and choose
+   "Enable MPE Mode", then turn on "MPE controller" in the Play & MIDI tab.
+
+The "Vocal Tract Synth.app" is a standalone version you can open without Live
+(run the same xattr command on it if macOS refuses to open it).

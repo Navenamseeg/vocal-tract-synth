@@ -1,0 +1,2280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>html,body{margin:0}body{font:14px system-ui,sans-serif}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Vocal Tract Synth</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout concept: a speech-lab instrument. Left to right the tube runs glottis to lips;
+   air is cool light, tissue is warm. Tract and vowel chart on top, spectrum under them,
+   then keys, then fine controls. */
+:root {
+  --bg: #e8ecee; --panel: #f6f8f9; --panel2: #edf1f3; --ink: #10202b; --muted: #566a77; --line: #c8d2d8;
+  --air: #0b7596; --tissue: #bd5247; --key: #fbfcfd; --keyb: #16242e; --keydown: #0b7596;
+  --display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+  --body: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a1015; --panel: #111920; --panel2: #0e151b; --ink: #e2ecf1; --muted: #8196a2; --line: #24323b;
+    --air: #63cfec; --tissue: #ea8b7e; --key: #d7e2e7; --keyb: #0a1217; --keydown: #63cfec; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a1015; --panel: #111920; --panel2: #0e151b; --ink: #e2ecf1; --muted: #8196a2; --line: #24323b;
+  --air: #63cfec; --tissue: #ea8b7e; --key: #d7e2e7; --keyb: #0a1217; --keydown: #63cfec; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body { background: var(--bg); color: var(--ink); font: 400 14px/1.45 var(--body); }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 18px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+button, input, select { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, .key:focus-visible { outline: 2px solid var(--air); outline-offset: 2px; }
+
+header.top { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; }
+h1 { margin: 0; font: 700 clamp(26px, 5vw, 38px)/1.05 var(--display); letter-spacing: -0.02em; text-wrap: balance; }
+.sub { margin: 6px 0 0; color: var(--muted); max-width: 52ch; }
+.status { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip { font: 500 11px/1 var(--mono); letter-spacing: 0.02em; padding: 7px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); white-space: nowrap; }
+.chip b { color: var(--ink); font-weight: 500; }
+.meter { width: 54px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; display: inline-block; vertical-align: middle; margin-left: 6px; }
+.meter i { display: block; height: 100%; width: 0; background: var(--air); transition: width 60ms linear; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-weight: 500; }
+.btn:hover { border-color: var(--air); }
+.btn[aria-pressed="true"] { background: var(--air); color: var(--bg); border-color: var(--air); }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.small { padding: 5px 9px; font-size: 12px; }
+
+.stage { display: grid; gap: 12px; grid-template-columns: 1fr; }
+@media (min-width: 900px) {
+  .stage { grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); grid-template-areas: "tract pad" "spec side"; }
+  .tract-card { grid-area: tract; } .pad-card { grid-area: pad; } .spec-card { grid-area: spec; } .side-card { grid-area: side; }
+}
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-width: 0; }
+.card h2 { margin: 0 0 8px; font: 500 11px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
+.card h2 span:last-child { text-transform: none; letter-spacing: 0; }
+canvas { display: block; width: 100%; border-radius: 8px; touch-action: none; background: var(--panel2); }
+#tract { aspect-ratio: 16 / 7.4; cursor: grab; }
+#pad { aspect-ratio: 1 / 0.92; cursor: crosshair; }
+#spec { aspect-ratio: 16 / 5.2; touch-action: auto; }
+.readout { margin: 8px 0 0; font: 400 12px/1.5 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.readout b { color: var(--ink); font-weight: 500; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; }
+.lbl { font: 500 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 12px 0 6px; display: block; }
+.lbl:first-child { margin-top: 0; }
+.vchips .btn { min-width: 38px; padding: 6px 8px; font-family: var(--body); }
+
+.keys-card { margin-top: 12px; }
+.keybar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.keybar .grow { flex: 1; }
+.kb { position: relative; height: clamp(110px, 22vw, 170px); display: flex; user-select: none; -webkit-user-select: none; touch-action: none; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+.key { flex: 1 1 0; position: relative; background: var(--key); border-right: 1px solid color-mix(in srgb, var(--keyb) 25%, var(--key)); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px; font: 500 10px var(--mono); color: color-mix(in srgb, var(--keyb) 55%, var(--key)); cursor: pointer; }
+.key.down { background: var(--keydown); color: var(--bg); }
+.key.black { position: absolute; top: 0; width: 5.6%; height: 62%; background: var(--keyb); border: 0; border-radius: 0 0 4px 4px; z-index: 2; flex: none; padding: 0; }
+.key.black.down { background: var(--keydown); }
+
+.controls { margin-top: 12px; display: grid; gap: 10px; grid-template-columns: 1fr; }
+@media (min-width: 760px) { .controls { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1100px) { .controls { grid-template-columns: repeat(3, 1fr); } }
+details.grp { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; min-width: 0; align-self: start; }
+details.grp summary { cursor: pointer; list-style: none; padding: 12px 0; font: 500 11px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }
+details.grp summary::-webkit-details-marker { display: none; }
+details.grp summary::after { content: "+"; font-size: 14px; line-height: 0.8; }
+details.grp[open] summary::after { content: "–"; }
+details.grp[open] { padding-bottom: 12px; }
+.ctl { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin: 0 0 12px; min-width: 0; }
+.ctl .name { font-weight: 500; }
+.ctl output { font: 400 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.ctl input[type=range] { grid-column: 1 / -1; width: 100%; margin: 4px 0 0; accent-color: var(--air); height: 24px; }
+.ctl .ends { grid-column: 1 / -1; display: flex; justify-content: space-between; font: 400 10px var(--mono); color: var(--muted); letter-spacing: 0.03em; }
+.ctl .ends i { font-style: normal; }
+.note { color: var(--muted); font-size: 12px; margin: 16px 0 0; max-width: 78ch; }
+.note b { color: var(--ink); font-weight: 600; }
+@media (max-width: 640px) { .hint { display: none; } }
+.deck { margin-top: 12px; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--line); margin: -2px 0 12px; scrollbar-width: thin; }
+.tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 9px 12px 8px; font: 500 12px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--air); }
+.tab:hover { color: var(--ink); }
+.tab:focus-visible { outline: 2px solid var(--air); outline-offset: -2px; }
+.pgrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); align-items: start; }
+@media (min-width: 900px) { .pgrid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); } .pgrid.phgrid { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); } }
+.grp { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+.grp h3 { margin: 0 0 10px; font: 500 11px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.grp .row { margin: 0 0 12px; }
+.segwrap { margin: 0 0 12px; display: grid; gap: 6px; }
+.segwrap .name { font-weight: 500; }
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.hint2 { color: var(--muted); font-size: 12px; margin: 4px 0 0; max-width: 70ch; }
+canvas.mini { aspect-ratio: 3 / 1.15; margin: 0 0 12px; touch-action: auto; background: var(--panel); }
+.mxbar { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.mxbar .hint2 { margin: 0; }
+.mxwrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); }
+table.mx { border-collapse: separate; border-spacing: 3px; font: 400 11px/1.2 var(--mono); padding: 4px; }
+table.mx th { font-weight: 500; color: var(--muted); }
+table.mx th.src { min-width: 58px; text-align: center; vertical-align: bottom; padding: 4px 2px; }
+table.mx th.src .sn { display: block; white-space: nowrap; }
+table.mx .mm { display: block; height: 4px; margin: 5px 6px 0; border-radius: 2px; background: var(--line); position: relative; overflow: hidden; }
+table.mx .mm i { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: var(--air); }
+table.mx th.dst { text-align: left; white-space: nowrap; padding: 0 10px 0 4px; position: sticky; left: 0; background: var(--panel2); z-index: 1; font: 500 12px var(--body); }
+table.mx th.dst.on { color: var(--ink); }
+table.mx th.dst.on::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--air); margin-right: 6px; vertical-align: 1px; }
+table.mx tr.gh th { text-align: left; padding: 10px 4px 2px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+table.mx th.corner { position: sticky; left: 0; background: var(--panel2); z-index: 1; }
+.cell { width: 58px; height: 26px; position: relative; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); cursor: ns-resize; touch-action: none; padding: 0; color: var(--ink); font: 500 11px var(--mono); display: block; overflow: hidden; }
+.cell::after { content: ""; position: absolute; left: 50%; top: 5px; bottom: 5px; width: 1px; background: var(--line); }
+.cell .bar { position: absolute; top: 4px; bottom: 4px; left: 50%; width: 0; background: color-mix(in srgb, var(--air) 70%, transparent); border-radius: 2px; }
+.cell .bar.neg { background: color-mix(in srgb, var(--tissue) 75%, transparent); }
+.cell .val { position: relative; z-index: 1; font-variant-numeric: tabular-nums; }
+.cell.on { border-color: color-mix(in srgb, var(--air) 55%, var(--line)); }
+.cell:focus-visible { outline: 2px solid var(--air); outline-offset: 1px; }
+textarea { width: 100%; font: 400 16px/1.45 var(--body); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; resize: vertical; margin: 0 0 10px; }
+textarea:focus-visible { outline: 2px solid var(--air); outline-offset: 1px; }
+.words { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+.word { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--panel); min-width: 0; }
+.wt { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+.wtext { font-weight: 600; }
+.wsrc { font: 400 10px var(--mono); color: var(--muted); }
+.wsrc.rules { color: var(--tissue); }
+.syls { display: flex; gap: 3px; flex-wrap: wrap; }
+.syl { font: 500 12px var(--mono); padding: 2px 6px; border-radius: 5px; background: var(--panel2); border: 1px solid var(--line); }
+.syl.now, .phstrip .s.now { background: var(--air); color: var(--bg); border-color: var(--air); }
+.phstrip { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 10px; font: 500 13px var(--mono); }
+.phstrip .sw { display: inline-flex; gap: 2px; }
+.phstrip .s { padding: 3px 6px; border-radius: 5px; background: var(--panel2); color: var(--muted); }
+.phstrip .s.next { box-shadow: inset 0 0 0 1px var(--air); color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) { .meter i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Vocal Tract Synth</h1>
+      <p class="sub">A physical model of a throat, mouth and nose that plays like an instrument. Drag the tongue, lips and velum, play it from a keyboard, or give it words to sing.</p>
+    </div>
+    <div class="status" aria-live="polite">
+      <button class="btn primary" id="startBtn" type="button">Start audio</button>
+      <span class="chip" id="chipAudio">audio <b>off</b></span>
+      <span class="chip" id="chipMidi">midi <b>checking</b></span>
+      <span class="chip" id="chipVoices">voices <b id="vcount">0</b><span class="meter"><i id="meter"></i></span></span>
+    </div>
+  </header>
+
+  <div class="stage">
+    <section class="card tract-card" aria-label="Vocal tract">
+      <h2><span>Tract, glottis to lips</span><span id="lenLabel">17.5 cm</span></h2>
+      <canvas id="tract" aria-label="Side view of the vocal tract with draggable tongue, lips, velum, throat and larynx handles"></canvas>
+      <p class="readout" id="readout"></p>
+    </section>
+
+    <section class="card pad-card" aria-label="Vowel chart">
+      <h2><span>Vowel chart</span><span>drag to shape the mouth</span></h2>
+      <canvas id="pad" aria-label="Vowel chart by first and second formant"></canvas>
+      <span class="lbl">Morph target (mod wheel)</span>
+      <div class="row vchips" id="vchips"></div>
+    </section>
+
+    <section class="card spec-card" aria-label="Spectrum">
+      <h2><span>Spectrum and tract response</span><span>0 – 5 kHz</span></h2>
+      <canvas id="spec" aria-label="Output spectrum with the tract response curve and formant markers"></canvas>
+    </section>
+
+    <section class="card side-card" aria-label="Voice presets">
+      <h2><span>Voices</span><span>size presets</span></h2>
+      <div class="row" id="presets"></div>
+      <span class="lbl">Try it without a keyboard</span>
+      <div class="row"><button class="btn" id="demoBtn" type="button">Sing the words</button><button class="btn" id="panicBtn" type="button">Silence</button></div>
+    </section>
+  </div>
+
+  <section class="card keys-card" aria-label="Keyboard">
+    <div class="keybar">
+      <button class="btn small" id="octDn" type="button" aria-label="Octave down">Oct −</button>
+      <button class="btn small" id="octUp" type="button" aria-label="Octave up">Oct +</button>
+      <span class="chip" id="rangeChip">C3 – C5</span>
+      <button class="btn small" id="monoBtn" type="button" aria-pressed="false">Mono</button>
+      <button class="btn small" id="phBtn" type="button" aria-pressed="false">Sing words</button>
+      <span class="grow"></span>
+      <span class="chip hint">keys <b>A W S E D F T G Y H U J K</b> · Z X octave</span>
+    </div>
+    <div class="phstrip" id="phStrip" aria-label="Words being sung" hidden></div>
+    <div class="kb" id="kb" role="group" aria-label="Piano keys"></div>
+  </section>
+
+  <section class="card deck" aria-label="Sound controls">
+    <div class="tabs" id="tabs" role="tablist"></div>
+    <div id="panels"></div>
+  </section>
+
+  <p class="note"><b>MIDI.</b> A connected keyboard plays the instrument when the browser allows Web MIDI: notes with velocity, pitch bend, sustain, channel and polyphonic pressure, mod wheel (CC 1) and slide (CC 74), with full MPE in the Play &amp; MIDI tab. If the chip above says blocked, the keys on screen and your computer keyboard still work.</p>
+</div>
+
+<script>
+/* Vocal tract synth engine: portable DSP (no DOM, no allocation in the audio loop).
+ * Kelly-Lochbaum waveguide tract + LF glottal source, polyphonic, runs at 2x oversampling. */
+function EngineFactory() {
+  'use strict';
+  const PI = Math.PI, TAU = PI * 2, C = 34300; // C = speed of sound, cm/s
+  const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+
+  /* ---- vowel presets: tongue place (x), constriction (y), tongue width (w), lips, pharynx ---- */
+  const VOWELS = /*@VOWELS@*/{"i":{"x":0.688,"y":0.166,"w":0.735,"lips":1,"phar":0.481,"vel":0},"ɪ":{"x":0.588,"y":0.31,"w":0.571,"lips":0.954,"phar":0.38,"vel":0},"ɛ":{"x":0.628,"y":0.516,"w":0.45,"lips":1,"phar":0.144,"vel":0},"æ":{"x":0.594,"y":0.657,"w":0.318,"lips":1,"phar":0,"vel":0},"ɑ":{"x":0.164,"y":0.304,"w":0.562,"lips":0.76,"phar":0.072,"vel":0},"ɔ":{"x":0.176,"y":0.121,"w":0.449,"lips":0.443,"phar":0.253,"vel":0},"ʊ":{"x":0.195,"y":0.326,"w":0.081,"lips":0.32,"phar":0.352,"vel":0},"u":{"x":0.53,"y":0.033,"w":0,"lips":0.087,"phar":0.221,"vel":0},"ʌ":{"x":0.191,"y":0.478,"w":0.489,"lips":0.684,"phar":0.216,"vel":0},"ə":{"x":0.542,"y":0.562,"w":0.47,"lips":0.741,"phar":0.354,"vel":0}}/*@END@*/;
+  const GRID = /*@GRID@*/{"NU":15,"NV":13,"d":[0.683,0.166,0.6,0.93,0.431,0.683,0.165,0.595,0.924,0.406,0.702,0.165,0.502,0.854,0.406,0.718,0.165,0.433,0.793,0.408,0.74,0.16,0.356,0.724,0.397,0.757,0.151,0.283,0.665,0.398,0.774,0.14,0.208,0.607,0.397,0.79,0.116,0.129,0.549,0.391,0.806,0.098,0.069,0.488,0.388,0.821,0.09,0.024,0.438,0.382,0.945,0.196,0.024,0.459,0.38,0.987,0.244,0.006,0.472,0.365,1,0.244,0,0.473,0.332,1,0.244,0,0.456,0.289,1,0.242,0,0.445,0.257,0.583,0.171,0.59,0.942,0.386,0.589,0.186,0.572,0.92,0.404,0.596,0.186,0.521,0.869,0.409,0.602,0.193,0.476,0.815,0.418,0.61,0.191,0.421,0.753,0.418,0.616,0.191,0.368,0.698,0.424,0.616,0.19,0.323,0.647,0.431,0.621,0.185,0.27,0.593,0.428,0.621,0.174,0.222,0.541,0.422,0.621,0.169,0.184,0.48,0.415,0.616,0.176,0.156,0.431,0.421,0.604,0.171,0.136,0.387,0.409,0.586,0.152,0.112,0.349,0.385,0.571,0.131,0.088,0.3,0.344,0.554,0.112,0.063,0.259,0.32,0.597,0.252,0.565,0.955,0.391,0.597,0.257,0.559,0.917,0.399,0.596,0.26,0.529,0.869,0.41,0.596,0.26,0.486,0.823,0.415,0.596,0.26,0.447,0.77,0.416,0.596,0.26,0.406,0.721,0.422,0.596,0.266,0.369,0.661,0.432,0.596,0.26,0.32,0.61,0.423,0.591,0.262,0.29,0.556,0.422,0.586,0.257,0.251,0.501,0.413,0.579,0.251,0.212,0.447,0.4,0.566,0.243,0.179,0.395,0.387,0.554,0.23,0.132,0.347,0.361,0.534,0.202,0.099,0.301,0.322,0.504,0.176,0.075,0.261,0.289,0.623,0.338,0.543,0.953,0.388,0.607,0.338,0.542,0.921,0.398,0.594,0.332,0.523,0.88,0.404,0.59,0.333,0.498,0.829,0.41,0.588,0.337,0.467,0.778,0.417,0.583,0.337,0.431,0.726,0.416,0.585,0.344,0.392,0.666,0.42,0.578,0.344,0.358,0.614,0.42,0.573,0.344,0.319,0.556,0.409,0.566,0.342,0.277,0.504,0.4,0.553,0.338,0.238,0.453,0.387,0.54,0.326,0.197,0.398,0.357,0.519,0.305,0.151,0.354,0.326,0.493,0.268,0.108,0.312,0.289,0.46,0.223,0.088,0.284,0.259,0.633,0.413,0.521,0.975,0.367,0.616,0.413,0.524,0.938,0.376,0.596,0.41,0.521,0.896,0.391,0.585,0.405,0.503,0.84,0.393,0.58,0.409,0.475,0.785,0.396,0.576,0.419,0.449,0.731,0.401,0.574,0.427,0.416,0.672,0.405,0.56,0.424,0.385,0.618,0.401,0.552,0.431,0.348,0.559,0.393,0.539,0.436,0.315,0.506,0.382,0.526,0.431,0.271,0.457,0.359,0.498,0.417,0.235,0.41,0.335,0.464,0.392,0.191,0.367,0.312,0.279,0.365,0.136,0.32,0.339,0.25,0.291,0.146,0.294,0.328,0.633,0.479,0.497,0.989,0.335,0.622,0.491,0.501,0.953,0.352,0.602,0.493,0.502,0.911,0.369,0.587,0.497,0.496,0.859,0.381,0.574,0.498,0.484,0.804,0.386,0.56,0.501,0.468,0.749,0.389,0.554,0.508,0.439,0.691,0.383,0.539,0.515,0.416,0.633,0.378,0.523,0.525,0.393,0.576,0.374,0.5,0.528,0.372,0.527,0.364,0.46,0.525,0.346,0.479,0.353,0.339,0.519,0.297,0.423,0.359,0.258,0.438,0.251,0.38,0.352,0.222,0.337,0.227,0.353,0.348,0.214,0.258,0.231,0.339,0.337,0.629,0.539,0.469,1,0.289,0.615,0.555,0.48,0.968,0.308,0.601,0.569,0.488,0.927,0.33,0.582,0.573,0.492,0.875,0.343,0.563,0.582,0.485,0.823,0.357,0.546,0.58,0.481,0.77,0.351,0.522,0.585,0.468,0.714,0.353,0.503,0.589,0.458,0.66,0.352,0.469,0.592,0.443,0.612,0.351,0.417,0.59,0.436,0.562,0.357,0.336,0.56,0.41,0.503,0.359,0.254,0.487,0.361,0.453,0.359,0.221,0.384,0.324,0.422,0.35,0.207,0.292,0.31,0.397,0.336,0.196,0.215,0.312,0.384,0.328,0.625,0.598,0.45,1,0.231,0.611,0.615,0.457,0.977,0.249,0.586,0.63,0.474,0.943,0.278,0.564,0.638,0.479,0.899,0.291,0.537,0.649,0.486,0.851,0.306,0.507,0.647,0.49,0.797,0.314,0.479,0.647,0.49,0.747,0.319,0.434,0.637,0.491,0.696,0.323,0.382,0.625,0.487,0.643,0.334,0.318,0.584,0.469,0.588,0.344,0.259,0.509,0.439,0.535,0.344,0.225,0.414,0.41,0.493,0.34,0.206,0.32,0.392,0.464,0.329,0.189,0.231,0.377,0.441,0.322,0.175,0.156,0.375,0.426,0.312,0.616,0.647,0.437,1,0.164,0.595,0.667,0.446,0.986,0.187,0.567,0.685,0.461,0.954,0.21,0.536,0.696,0.473,0.913,0.229,0.501,0.704,0.487,0.873,0.251,0.456,0.689,0.499,0.831,0.266,0.409,0.673,0.51,0.779,0.279,0.349,0.646,0.513,0.724,0.292,0.291,0.6,0.502,0.671,0.306,0.253,0.525,0.488,0.616,0.309,0.221,0.43,0.465,0.562,0.309,0.2,0.339,0.443,0.533,0.309,0.191,0.257,0.442,0.507,0.306,0.173,0.178,0.433,0.485,0.298,0.163,0.112,0.434,0.457,0.281,0.598,0.695,0.429,1,0.097,0.573,0.718,0.434,0.995,0.115,0.537,0.729,0.452,0.963,0.137,0.494,0.737,0.477,0.929,0.158,0.441,0.73,0.494,0.891,0.177,0.383,0.702,0.513,0.855,0.205,0.328,0.665,0.525,0.805,0.225,0.278,0.6,0.52,0.75,0.246,0.238,0.525,0.509,0.688,0.259,0.216,0.439,0.503,0.643,0.266,0.202,0.355,0.491,0.605,0.27,0.184,0.275,0.482,0.572,0.268,0.167,0.196,0.479,0.54,0.266,0.154,0.129,0.473,0.512,0.25,0.15,0.075,0.468,0.478,0.224,0.573,0.739,0.429,1,0.033,0.541,0.756,0.439,1,0.048,0.493,0.764,0.459,0.976,0.067,0.436,0.758,0.486,0.943,0.087,0.376,0.725,0.506,0.908,0.107,0.314,0.677,0.523,0.869,0.14,0.26,0.611,0.531,0.818,0.167,0.231,0.531,0.531,0.759,0.185,0.208,0.445,0.522,0.711,0.202,0.196,0.364,0.52,0.675,0.216,0.179,0.282,0.514,0.635,0.224,0.162,0.208,0.51,0.606,0.229,0.155,0.144,0.509,0.575,0.22,0.147,0.095,0.503,0.535,0.193,0.147,0.048,0.482,0.486,0.155,0.517,0.773,0.44,1,0,0.485,0.78,0.453,1,0,0.428,0.774,0.483,0.984,0.011,0.363,0.743,0.505,0.956,0.03,0.299,0.691,0.526,0.923,0.054,0.25,0.618,0.538,0.876,0.083,0.22,0.537,0.535,0.828,0.101,0.205,0.456,0.538,0.781,0.129,0.181,0.366,0.537,0.734,0.149,0.175,0.296,0.541,0.701,0.157,0.162,0.222,0.542,0.672,0.169,0.151,0.162,0.537,0.641,0.176,0.142,0.098,0.529,0.6,0.171,0.147,0.084,0.513,0.546,0.134,0.147,0.048,0.494,0.486,0.155,0.455,0.794,0.466,1,0,0.408,0.781,0.481,1,0,0.346,0.753,0.509,1,0,0.288,0.702,0.535,0.972,0,0.241,0.631,0.545,0.934,0.017,0.219,0.553,0.546,0.891,0.035,0.198,0.474,0.545,0.845,0.06,0.185,0.389,0.551,0.801,0.083,0.169,0.307,0.558,0.761,0.103,0.161,0.238,0.569,0.724,0.121,0.146,0.175,0.565,0.687,0.13,0.151,0.122,0.546,0.653,0.121,0.142,0.098,0.554,0.6,0.14,0.147,0.084,0.521,0.546,0.134,0.147,0.048,0.494,0.486,0.155]}/*@END@*/;   // smooth articulation map over the vowel trapezoid
+  const VOWEL_ORDER = ['i', 'ɪ', 'ɛ', 'æ', 'ɑ', 'ɔ', 'ʊ', 'u', 'ʌ', 'ə'];
+  // nominal formants (Hz) of an adult male, used for the vowel chart and for tuning
+  const VOWEL_FORMANTS = {
+    'i': [270, 2290, 3010], 'ɪ': [390, 1990, 2550], 'ɛ': [530, 1840, 2480], 'æ': [660, 1720, 2410],
+    'ɑ': [730, 1090, 2440], 'ɔ': [570, 840, 2410], 'ʊ': [440, 1020, 2240], 'u': [300, 870, 2240],
+    'ʌ': [640, 1190, 2390], 'ə': [500, 1500, 2500]
+  };
+
+  const DEFAULTS = {
+    // mouth (base shape)
+    x: 0.5, y: 0.5, w: 0.5, lips: 0.5, phar: 0.5, vel: 0, tip: 1,
+    morph: 0, bx: 0.688, by: 0.166, bw: 0.735, blips: 1, bphar: 0.481, bvel: 0,   // morph target defaults to /i/
+    // source
+    tension: 0.6, breath: 0.12, fric: 0, vib: 22, vibRate: 5.4, vibDelay: 350, human: 0.35,
+    // size
+    length: 17.5, larynx: 0, tune: 0.5,
+    // amp envelope (env 1)
+    attack: 25, decay: 400, sustain: 1, release: 170,
+    // mod envelopes
+    e2a: 5, e2d: 220, e2s: 0, e2r: 200, e2loop: 0,
+    e3a: 400, e3d: 800, e3s: 0.6, e3r: 500, e3loop: 0,
+    // LFOs: shape 0 sine 1 triangle 2 saw 3 square 4 sample&hold 5 drift
+    l1shape: 0, l1rate: 3, l1sync: 0, l1div: 4, l1amt: 1, l1retrig: 1,
+    l2shape: 5, l2rate: 0.6, l2sync: 0, l2div: 2, l2amt: 1, l2retrig: 0,
+    bpm: 120,
+    // play
+    mono: 0, legRetrig: 0, glideMode: 0, prio: 0, glide: 90, bend: 2, mpe: 0, mpeBend: 48,
+    voices: 6, artTime: 30, spread: 0.5,
+    // phrase
+    phOn: 0, phAuto: 1, phWait: 650, phLen: 380, phLoop: 1, phReset: 2.5, phCons: 0.85,
+    // output
+    master: 0.75, room: 0.18, bright: 0.85
+  };
+
+  /* ---- modulation matrix: sources x destinations ---- */
+  const MOD_SRC = ['env2', 'env3', 'lfo1', 'lfo2', 'vel', 'note', 'mw', 'press', 'slide', 'bend', 'rand'];
+  const MOD_DST = ['pitch', 'amp', 'pan', 'x', 'y', 'w', 'lips', 'phar', 'vel', 'tip', 'length', 'larynx',
+    'tension', 'breath', 'fric', 'vib', 'morph', 'l1rate', 'l1amt', 'l2rate', 'l2amt'];
+  const NS = MOD_SRC.length, ND = MOD_DST.length;
+  const SI = {}, DI = {};
+  MOD_SRC.forEach((s, i) => { SI[s] = i; }); MOD_DST.forEach((d, i) => { DI[d] = i; });
+  // what one unit of modulation means for each destination
+  const DST_SCALE = { pitch: 24, amp: 1, pan: 1, x: 1, y: 1, w: 1, lips: 1, phar: 1, vel: 1, tip: 1, length: 8, larynx: 1,
+    tension: 1, breath: 1, fric: 1, vib: 60, morph: 1, l1rate: 4, l1amt: 1, l2rate: 4, l2amt: 1 };
+  const DEFAULT_MODS = [['mw', 'morph', 1], ['press', 'y', 0.3], ['press', 'amp', 0.3], ['press', 'tension', 0.2], ['slide', 'x', 0.35]];
+  const LFO_DIVS = [16, 8, 4, 2, 1, 0.5, 0.25, 2 / 3, 1 / 3, 1 / 6];   // beats per cycle
+  const LFO_DIV_NAMES = ['4 bars', '2 bars', '1 bar', '1/2', '1/4', '1/8', '1/16', '1/4T', '1/8T', '1/16T'];
+
+  /* ---- phonemes (ARPAbet) ---- */
+  const VMAP = { AA: 'ɑ', AE: 'æ', AH: 'ʌ', AX: 'ə', AO: 'ɔ', EH: 'ɛ', IH: 'ɪ', IY: 'i', UH: 'ʊ', UW: 'u' };
+  const VCUSTOM = { ER: { x: 0.62, y: 0.3, w: 0.45, lips: 0.38, phar: 0.1 } };
+  const DIPH = { AW: ['AA', 'UH'], AY: ['AA', 'IY'], EY: ['EH', 'IY'], OW: ['AO', 'UH'], OY: ['AO', 'IY'] };
+  // consonants: o = shape overrides on top of the neighbouring vowel; vo voicing; fr hiss; asp breath; bu burst on release
+  const CONS = {
+    P: { o: { lc: 1 }, vo: 0, dur: 75, tt: 10, bu: 1 },
+    B: { o: { lc: 1 }, vo: 0.45, dur: 60, tt: 10, bu: 0.5 },
+    M: { o: { lc: 1, vel: 1 }, vo: 1, dur: 85, tt: 14 },
+    F: { o: { lc: 0.8 }, vo: 0, fr: 0.75, dur: 105, tt: 16 },
+    V: { o: { lc: 0.8 }, vo: 1, fr: 0.35, dur: 80, tt: 16 },
+    TH: { o: { tip: 0.12 }, vo: 0, fr: 0.5, dur: 100, tt: 16 },
+    DH: { o: { tip: 0.14 }, vo: 1, fr: 0.2, dur: 55, tt: 16 },
+    T: { o: { tip: 0 }, vo: 0, dur: 60, tt: 9, bu: 1 },
+    D: { o: { tip: 0 }, vo: 0.45, dur: 50, tt: 9, bu: 0.55 },
+    N: { o: { tip: 0, vel: 1 }, vo: 1, dur: 80, tt: 14 },
+    S: { o: { tip: 0.07 }, vo: 0, fr: 1, dur: 120, tt: 14 },
+    Z: { o: { tip: 0.07 }, vo: 1, fr: 0.5, dur: 95, tt: 14 },
+    SH: { o: { x: 0.84, y: 0.05, lips: 0.25 }, vo: 0, fr: 0.9, dur: 120, tt: 16 },
+    ZH: { o: { x: 0.84, y: 0.05, lips: 0.25 }, vo: 1, fr: 0.45, dur: 95, tt: 16 },
+    K: { o: { x: 0.6, y: -1 }, vo: 0, dur: 65, tt: 10, bu: 1 },
+    G: { o: { x: 0.6, y: -1 }, vo: 0.45, dur: 55, tt: 10, bu: 0.55 },
+    NG: { o: { x: 0.6, y: -1, vel: 1 }, vo: 1, dur: 90, tt: 14 },
+    L: { o: { tip: 0.16, w: 0.85 }, vo: 1, dur: 70, tt: 24 },
+    R: { o: { x: 0.62, y: 0.28, lips: 0.3, phar: 0.1 }, vo: 1, dur: 70, tt: 30 },
+    W: { o: { x: 0.28, y: 0.14, lips: 0, w: 0.1 }, vo: 1, dur: 65, tt: 32 },
+    Y: { o: { x: 0.82, y: 0.04, lips: 1 }, vo: 1, dur: 55, tt: 30 },
+    HH: { o: {}, vo: 0, asp: 1, dur: 70, tt: 20 }
+  };
+  const AFFRIC = { CH: ['T', 'SH'], JH: ['D', 'ZH'] };
+  const PHONE_KEYS = ['x', 'y', 'w', 'lips', 'phar', 'vel', 'tip', 'lc'];
+  function vowelShape(code, out) {
+    const s = VCUSTOM[code] || VOWELS[VMAP[code] || 'ə'];
+    out.x = s.x; out.y = s.y; out.w = s.w; out.lips = s.lips; out.phar = s.phar; out.vel = 0; out.tip = 1; out.lc = 0;
+    return out;
+  }
+
+  /* ---- area function: articulation -> cross-section area (cm^2) per tract segment ---- */
+  const AINFO = { xc: 0, sig: 0, c: 0, minA: 9, minI: 0 };
+  function buildAreas(a, N, A) {
+    const xc = 0.16 + 0.76 * a.x;                 // tongue-body constriction centre, fraction of tract from glottis
+    const sig = 0.05 + 0.2 * a.w;                 // constriction spread
+    const y = a.y;
+    const c = y >= 0 ? 0.025 + 0.975 * y * y : 0.025 * (1 + Math.max(y, -1));   // y < 0 closes completely
+    const ph = 0.55 + 1.1 * a.phar;               // pharynx scale
+    const lipA = 0.35 * Math.pow(26, a.lips);     // 0.35 (rounded) .. 9 (open) cm^2
+    const aL = 1.1 * Math.sqrt(ph), aP = 4.2 * ph, aO = 3.8 + 2.4 * clamp(y, 0, 1);   // mouth opens with the jaw
+    const lipS0 = 0.86 - 0.12 * (1 - a.lips);     // rounded lips form a longer narrow tube
+    const tip = a.tip === undefined ? 1 : clamp(a.tip, 0, 1);
+    const ct = tip * tip, lc = a.lc ? clamp(a.lc, 0, 1) : 0;
+    const inv2s = 1 / (2 * sig * sig), inv2t = 1 / (2 * 0.032 * 0.032);
+    let minA = 99, minI = 0;
+    for (let i = 0; i < N; i++) {
+      const x = (i + 0.5) / N;
+      let ar = lerp(aL, aP, sstep(0.07, 0.15, x));
+      ar = lerp(ar, aO, sstep(0.38, 0.5, x));
+      ar = lerp(ar, lipA, sstep(lipS0, 0.97, x));
+      const d = x - xc;
+      ar *= 1 - Math.exp(-d * d * inv2s) * (1 - c);
+      if (ct < 1) { const dt = x - 0.885; ar *= 1 - Math.exp(-dt * dt * inv2t) * (1 - ct); }
+      if (lc > 0) ar *= 1 - sstep(0.93, 0.985, x) * lc;
+      if (ar < 0.012) ar = 0.012;
+      A[i] = ar;
+      if (i > 2 && ar < minA) { minA = ar; minI = i; }
+    }
+    AINFO.xc = xc; AINFO.sig = sig; AINFO.c = c; AINFO.minA = minA; AINFO.minI = minI;
+    return AINFO;
+  }
+
+  /* ---- waveguide tract ---- */
+  class Tract {
+    constructor(maxN, fsT) {
+      this.maxN = maxN; this.fsT = fsT;
+      const f = () => new Float64Array(maxN + 3);
+      this.R = f(); this.L = f(); this.jR = f(); this.jL = f();
+      this.A = f(); this.k1 = f(); this.k2 = f(); this.tmp = f();
+      this.nR = f(); this.nL = f(); this.njR = f(); this.njL = f();
+      this.nA = f(); this.nk1 = f(); this.nk2 = f();
+      this.N = 0; this.NL = 0; this.ns = 2; this.noseOn = false;
+      this.loss = 0.9994; this.gRefl = 0.75;
+      this.lipC = 0.3; this.lipG = 0.96; this.lipS = 0; this.noseC = 0.25; this.noseS = 0;
+      this.inj = 2;
+    }
+    reset() {
+      this.R.fill(0); this.L.fill(0); this.jR.fill(0); this.jL.fill(0);
+      this.nR.fill(0); this.nL.fill(0); this.njR.fill(0); this.njL.fill(0);
+      this.lipS = 0; this.noseS = 0;
+    }
+    _resample(arr, oldN, N) {
+      const t = this.tmp;
+      for (let i = 0; i < N; i++) {
+        const p = (i + 0.5) * oldN / N - 0.5;
+        const i0 = Math.floor(p), fr = p - i0;
+        const a = arr[clamp(i0, 0, oldN - 1)], b = arr[clamp(i0 + 1, 0, oldN - 1)];
+        t[i] = a + (b - a) * fr;
+      }
+      for (let i = 0; i < N; i++) arr[i] = t[i];
+      for (let i = N; i < oldN; i++) arr[i] = 0;
+    }
+    resize(N) {
+      if (N === this.N) return;
+      const oldN = this.N, oldNL = this.NL;
+      if (oldN > 0) { this._resample(this.R, oldN, N); this._resample(this.L, oldN, N); }
+      this.N = N;
+      this.NL = Math.max(8, Math.round(0.62 * N));
+      this.ns = clamp(Math.round(0.4 * N), 2, N - 3);
+      if (oldNL > 0 && oldNL !== this.NL) { this._resample(this.nR, oldNL, this.NL); this._resample(this.nL, oldNL, this.NL); }
+      // fixed nose shape (cm^2); element 0 is the velum port and is set per tick
+      const NL = this.NL;
+      for (let j = 1; j < NL; j++) this.nA[j] = 0.9 + 2.6 * Math.pow(Math.sin(PI * (j + 0.5) / NL), 0.6);
+      for (let j = 2; j < NL; j++) {
+        const s = this.nA[j - 1] + this.nA[j];
+        this.nk1[j] = 2 * this.nA[j - 1] / s; this.nk2[j] = 2 * this.nA[j] / s;
+      }
+    }
+    /* call after buildAreas wrote this.A[0..N-1] */
+    setShape(port) {
+      const N = this.N, A = this.A;
+      for (let i = 1; i < N; i++) {
+        const s = A[i - 1] + A[i];
+        this.k1[i] = 2 * A[i - 1] / s; this.k2[i] = 2 * A[i] / s;
+      }
+      // lips: radiation corner depends on opening radius
+      const rad = Math.sqrt(A[N - 1] / PI);
+      const fc = clamp(0.62 * C / (TAU * rad), 1800, 14000);
+      this.lipC = 1 - Math.exp(-TAU * fc / this.fsT);
+      const on = port > 0.03;
+      if (on) {
+        this.nA[0] = port;
+        const s = port + this.nA[1];
+        this.nk1[1] = 2 * port / s; this.nk2[1] = 2 * this.nA[1] / s;
+      } else if (this.noseOn) {
+        this.nR.fill(0); this.nL.fill(0); this.njR.fill(0); this.njL.fill(0); this.noseS = 0;
+      }
+      this.noseOn = on;
+    }
+    step(src, fn) {
+      const N = this.N, R = this.R, L = this.L, jR = this.jR, jL = this.jL, k1 = this.k1, k2 = this.k2, loss = this.loss;
+      jR[0] = L[0] * this.gRefl + src;
+      const rN = R[N - 1];
+      this.lipS += this.lipC * (rN - this.lipS);
+      const refl = -this.lipG * this.lipS;
+      jL[N] = refl;
+      let out = rN + refl;
+      if (!this.noseOn) {
+        for (let i = 1; i < N; i++) {
+          const l = L[i], r = R[i - 1], P = k1[i] * r + k2[i] * l;
+          jR[i] = P - l; jL[i] = P - r;
+        }
+      } else {
+        const ns = this.ns, A = this.A, nR = this.nR, nL = this.nL, njR = this.njR, njL = this.njL, NL = this.NL;
+        for (let i = 1; i < ns; i++) {
+          const l = L[i], r = R[i - 1], P = k1[i] * r + k2[i] * l;
+          jR[i] = P - l; jL[i] = P - r;
+        }
+        {
+          const l = L[ns], r = R[ns - 1], nl = nL[0], a1 = A[ns - 1], a2 = A[ns], a3 = this.nA[0];
+          const P = 2 * (a1 * r + a2 * l + a3 * nl) / (a1 + a2 + a3);
+          jR[ns] = P - l; jL[ns] = P - r; njR[0] = P - nl;
+        }
+        for (let i = ns + 1; i < N; i++) {
+          const l = L[i], r = R[i - 1], P = k1[i] * r + k2[i] * l;
+          jR[i] = P - l; jL[i] = P - r;
+        }
+        const nrN = nR[NL - 1];
+        this.noseS += this.noseC * (nrN - this.noseS);
+        const nrefl = -0.92 * this.noseS;
+        njL[NL] = nrefl;
+        out += 0.8 * (nrN + nrefl);
+        const nk1 = this.nk1, nk2 = this.nk2;
+        for (let j = 1; j < NL; j++) {
+          const l = nL[j], r = nR[j - 1], P = nk1[j] * r + nk2[j] * l;
+          njR[j] = P - l; njL[j] = P - r;
+        }
+        for (let j = 0; j < NL; j++) { nR[j] = njR[j] * loss; nL[j] = njL[j + 1] * loss; }
+      }
+      if (fn !== 0) { const q = this.inj; jR[q] += fn; jL[q] += fn; }
+      for (let i = 0; i < N; i++) { R[i] = jR[i] * loss; L[i] = jL[i + 1] * loss; }
+      return out;
+    }
+  }
+
+  /* ---- LF glottal flow-derivative model (Fant Rd parametrisation) ---- */
+  function lfSetup(Rd, o) {
+    Rd = clamp(Rd, 0.5, 2.7);
+    const Ra = -0.01 + 0.048 * Rd, Rk = 0.224 + 0.118 * Rd;
+    const Rg = (Rk / 4) * (0.5 + 1.2 * Rk) / (0.11 * Rd - Ra * (0.5 + 1.2 * Rk));
+    const Ta = Ra, Tp = 1 / (2 * Rg), Te = Tp + Tp * Rk;
+    const eps = 1 / Ta, shift = Math.exp(-eps * (1 - Te)), Delta = 1 - shift;
+    const omega = PI / Tp, s = Math.sin(omega * Te);
+    // solve alpha so the net flow-derivative over one period is zero
+    const ret = -1 / eps + shift * (1 - Te) / Delta;
+    const open = (al) => -((al * s - omega * Math.cos(omega * Te)) + omega * Math.exp(-al * Te)) / (s * (al * al + omega * omega));
+    let lo = -200, hi = 200;
+    for (let k = 0; k < 40; k++) {
+      const mid = 0.5 * (lo + hi);
+      // open(alpha)+ret is increasing in alpha here; keep sign test generic
+      const f = open(mid) + ret, flo = open(lo) + ret;
+      if ((f > 0) === (flo > 0)) lo = mid; else hi = mid;
+    }
+    const alpha = 0.5 * (lo + hi);
+    o.Te = Te; o.eps = eps; o.shift = shift; o.invDelta = 1 / Delta; o.omega = omega; o.alpha = alpha;
+    o.E0 = -1 / (s * Math.exp(alpha * Te));
+  }
+  function lfWave(tn, o) {
+    return tn > o.Te ? (o.shift - Math.exp(-o.eps * (tn - o.Te))) * o.invDelta
+      : o.E0 * Math.exp(o.alpha * tn) * Math.sin(o.omega * tn);
+  }
+  // RMS of the waveform per Rd, for loudness normalisation
+  const RMS_TAB = new Float64Array(24);
+  (function () {
+    const o = {};
+    for (let k = 0; k < 24; k++) {
+      lfSetup(0.5 + k * 0.1, o);
+      let s = 0; const M = 2000;
+      for (let i = 0; i < M; i++) { const g = lfWave(i / M, o); s += g * g; }
+      RMS_TAB[k] = Math.sqrt(s / M);
+    }
+  })();
+  const rmsAt = (Rd) => { const p = clamp((Rd - 0.5) * 10, 0, 22.999), i = Math.floor(p); return lerp(RMS_TAB[i], RMS_TAB[i + 1], p - i); };
+
+  /* ---- one voice ---- */
+  const TICK = 16;
+  const ART = ['x', 'y', 'w', 'lips', 'phar', 'vel', 'tip', 'lc'];
+  const mkArt = () => ({ x: 0.5, y: 0.5, w: 0.5, lips: 0.5, phar: 0.5, vel: 0, tip: 1, lc: 0 });
+  const mkSeg = () => ({ x: 0.5, y: 0.5, w: 0.5, lips: 0.5, phar: 0.5, vel: 0, tip: 1, lc: 0, vo: 1, asp: 0, fr: 0, bu: 0, dur: 0, tt: 30, nuc: false, sy: 0 });
+  const SEG_POOL = 24;
+
+  /* control-rate ADSR with optional A-D loop, for env 2 and 3 */
+  class ModEnv {
+    constructor() { this.v = 0; this.st = 0; this.t = 0; }
+    gateOn() { this.st = 1; this.t = 0; }
+    gateOff() { if (this.st) this.st = 4; }
+    step(dtms, a, d, s, r, loop) {
+      switch (this.st) {
+        case 1: this.v += dtms / Math.max(a, 0.5); if (this.v >= 1) { this.v = 1; this.st = 2; this.t = 0; } break;
+        case 2: {
+          this.t += dtms;
+          this.v = s + (this.v - s) * Math.exp(-dtms / Math.max(d * 0.25, 0.3));
+          if (this.t >= d) { if (loop) { this.st = 1; } else { this.st = 3; this.v = s; } }
+          break;
+        }
+        case 3: this.v = s; break;
+        case 4: this.v *= Math.exp(-dtms / Math.max(r * 0.2, 0.3)); if (this.v < 1e-4) { this.v = 0; this.st = 0; } break;
+      }
+      return this.v;
+    }
+  }
+
+  function lfoShape(shape, ph, r0, r1) {
+    switch (shape) {
+      case 0: return Math.sin(TAU * ph);
+      case 1: return ph < 0.5 ? 4 * ph - 1 : 3 - 4 * ph;
+      case 2: return 2 * ph - 1;
+      case 3: return ph < 0.5 ? 1 : -1;
+      case 4: return r1;
+      default: { const t = ph * ph * (3 - 2 * ph); return r0 + (r1 - r0) * t; }
+    }
+  }
+
+  class Voice {
+    constructor(syn, idx) {
+      this.syn = syn; this.idx = idx;
+      this.tract = new Tract(syn.maxN, syn.fsT);
+      this.art = mkArt(); this.tg = mkArt();
+      this.seed = (2463534242 + idx * 7919) | 0;
+      this.active = false; this.gate = false; this.sustained = false; this.pendingRel = false;
+      this.note = 60; this.vel = 0.8; this.ch = 0; this.env = 0; this.est = 0; this.age = 0; this.order = 0;
+      this.o1 = 0; this.o2 = 0; this.gl = 0.7; this.gr = 0.7; this.pan0 = 0;
+      this.f = 220; this.gn = 60; this.vibPh = 0; this.drift = 0; this.dT = 0; this.dCount = 0;
+      this.t = 0; this.wlen = 1 / 220; this.invLen = 220; this.ten = 0.6; this.shim = 1; this.gGain = 1; this.aspGain = 0.1;
+      this.fricAmt = 0; this.hp = 0; this.lpS = 0; this.burst = 0; this.vo = 1; this.asp = 0; this.fr = 0;
+      this.Te = 0.6; this.eps = 1; this.shift = 0; this.invDelta = 1; this.omega = 1; this.alpha = 0; this.E0 = 1;
+      this.aC = 0.001; this.dC = 0.001; this.rC = 0.999; this.vamp = 1; this.ampMod = 1;
+      // modulation
+      this.src = new Float64Array(NS); this.dst = new Float64Array(ND);
+      this.e2 = new ModEnv(); this.e3 = new ModEnv();
+      this.lph = [0, 0]; this.lr0 = [0, 0]; this.lr1 = [0, 0]; this.rand = 0; this.pat = 0;
+      // phrase
+      this.pool = []; for (let i = 0; i < SEG_POOL; i++) this.pool.push(mkSeg());
+      this.ql = 0; this.qi = 0; this.segT = 0; this.sy = -1; this.nucT = 0; this.inPhrase = false; this.Leff = 17.5; this.firstSyl = true; this.closeF = 1;
+      this.tmpA = mkArt(); this.tmpB = mkArt();
+    }
+    rnd() {
+      let s = this.seed; s ^= s << 13; s ^= s >>> 17; s ^= s << 5; this.seed = s | 0;
+      return (s >>> 0) / 2147483648 - 1;
+    }
+    start(note, vel, order, ch, sy) {
+      const syn = this.syn, P = syn.p;
+      const was = this.active;
+      this.note = note; this.vel = vel; this.ch = ch || 0; this.gate = true; this.sustained = false; this.pendingRel = false; this.order = order;
+      this.vamp = 0.3 + 0.7 * Math.pow(vel, 1.3);
+      this.gn = (P.glideMode === 1 && syn.lastNote >= 0) ? syn.lastNote : note;
+      this.age = 0; this.est = 1; this.pat = 0;
+      this.rand = this.rnd();
+      this.e2.gateOn(); this.e3.gateOn();
+      if (P.l1retrig) { this.lph[0] = 0; this.lr0[0] = this.lr1[0]; this.lr1[0] = this.rnd(); }
+      if (P.l2retrig) { this.lph[1] = 0; this.lr0[1] = this.lr1[1]; this.lr1[1] = this.rnd(); }
+      this.setEnvTimes();
+      this.pan0 = clamp(((note - 60) / 30) * P.spread * 0.8 + this.rnd() * P.spread * 0.35, -1, 1);
+      // phrase
+      this.inPhrase = sy >= 0 && syn.syl.length > 0;
+      if (this.inPhrase) this.beginSyllable(sy, false);
+      if (!was) {
+        this.tract.reset(); this.env = 0; this.vibPh = (this.rnd() + 1) * PI; this.drift = 0; this.dT = 0; this.dCount = 0;
+        this.ten = clamp(P.tension + (vel - 0.6) * 0.3, 0, 1);
+        this.t = 0; this.hp = 0; this.lpS = 0; this.burst = 0;
+        this.computeMods(0);
+        this._targets();
+        for (let k = 0; k < 8; k++) this.art[ART[k]] = this.tg[ART[k]];
+        this.vo = this.inPhrase ? this.pool[0].vo : 1; this.asp = 0; this.fr = 0;
+        this._shape();
+        this.newPeriod();
+      }
+      this.active = true;
+    }
+    legato(note, vel, ch, sy, retrig) {
+      const P = this.syn.p;
+      this.note = note; this.vel = vel; if (ch !== undefined) this.ch = ch;
+      this.vamp = 0.3 + 0.7 * Math.pow(vel, 1.3); this.gate = true; this.sustained = false; this.pendingRel = false;
+      if (this.est === 3) this.est = 1;
+      if (retrig && P.legRetrig) { this.e2.gateOn(); this.e3.gateOn(); }
+      if (sy >= 0 && this.syn.syl.length) { this.firstSyl = true; if (this.inPhrase) this.advanceTo(sy); else { this.inPhrase = true; this.beginSyllable(sy, false); } }
+    }
+    release() {
+      if (this.pendingRel) return;
+      if (this.inPhrase && this.gate) {
+        const n = this.queueCoda(0);
+        if (n > 0) { this.ql = n; this.qi = 0; this.segT = 0; this.nucT = 0; this.pendingRel = true; return; }
+      }
+      this.reallyRelease();
+    }
+    reallyRelease() { this.pendingRel = false; this.gate = false; this.est = 3; this.e2.gateOff(); this.e3.gateOff(); this.setEnvTimes(); }
+    finish() { this.active = false; this.gate = false; this.pendingRel = false; this.env = 0; this.est = 0; this.tract.reset(); this.inPhrase = false; }
+    setEnvTimes() {
+      const P = this.syn.p, sr = this.syn.sr;
+      this.aC = 1 - Math.exp(-1 / (sr * Math.max(P.attack, 1) * 0.001 / 1.6));
+      this.dC = 1 - Math.exp(-1 / (sr * Math.max(P.decay, 5) * 0.001 / 4));
+      this.rC = Math.exp(-1 / (sr * Math.max(P.release, 5) * 0.001 / 5));
+    }
+
+    /* ---------- phrase sequencing ---------- */
+    _fillVowel(seg, code, sy) {
+      vowelShape(code, seg);
+      seg.vo = 1; seg.asp = 0; seg.fr = 0; seg.bu = 0; seg.dur = 0; seg.tt = 45; seg.nuc = true; seg.sy = sy;
+    }
+    _fillCons(seg, code, base, sy) {
+      const P = this.syn.p, c = CONS[code], s = clamp(P.phCons, 0, 1);
+      for (let k = 0; k < 8; k++) seg[ART[k]] = base[ART[k]];
+      const o = c.o;
+      for (const k in o) seg[k] = lerp(base[k], o[k], 0.25 + 0.75 * s);
+      seg.vo = lerp(1, c.vo, s); seg.asp = (c.asp || 0) * s; seg.fr = (c.fr || 0) * s; seg.bu = (c.bu || 0) * s;
+      seg.dur = c.dur * (0.6 + 0.4 * s); seg.tt = c.tt; seg.nuc = false; seg.sy = sy;
+    }
+    _pushCons(n, code, base, sy) {
+      if (AFFRIC[code]) { const pair = AFFRIC[code]; this._fillCons(this.pool[n], pair[0], base, sy); this.pool[n].dur *= 0.7; this.pool[n].bu *= 0.5; n++; code = pair[1]; }
+      if (!CONS[code] || n >= SEG_POOL - 2) return n;
+      this._fillCons(this.pool[n], code, base, sy); return n + 1;
+    }
+    _vowelBase(sy, which) {   // shape of the syllable's vowel (first part, or the off-glide)
+      const S = this.syn.syl[sy], v = S.v;
+      const code = DIPH[v] ? DIPH[v][which] : v;
+      return vowelShape(VMAP[code] || VCUSTOM[code] ? code : 'AX', which ? this.tmpB : this.tmpA);
+    }
+    _onset(sy, n) {
+      const S = this.syn.syl[sy];
+      const base = this._vowelBase(sy, 0);
+      for (let i = 0; i < S.on.length; i++) n = this._pushCons(n, S.on[i], base, sy);
+      const v = DIPH[S.v] ? DIPH[S.v][0] : S.v;
+      this._fillVowel(this.pool[n], VMAP[v] || VCUSTOM[v] ? v : 'AX', sy);
+      return n + 1;
+    }
+    queueCoda(n) {   // the closing part of the current syllable, written at pool[n..]
+      if (this.sy < 0 || this.sy >= this.syn.syl.length) return n;
+      const S = this.syn.syl[this.sy];
+      let base = this._vowelBase(this.sy, 0);
+      if (DIPH[S.v]) {
+        base = this._vowelBase(this.sy, 1);
+        const g = this.pool[n]; this._fillVowel(g, DIPH[S.v][1], this.sy); g.nuc = false; g.dur = 150; g.tt = 70; n++;
+      }
+      for (let i = 0; i < S.off.length; i++) n = this._pushCons(n, S.off[i], base, this.sy);
+      return n;
+    }
+    beginSyllable(sy, withCoda) {
+      this.firstSyl = true;
+      let n = withCoda ? this.queueCoda(0) : 0;
+      n = this._onset(sy, n);
+      this.ql = n; this.qi = 0; this.segT = 0; this.nucT = 0; this.sy = sy;
+    }
+    advanceTo(sy) {
+      let n = this.queueCoda(0);
+      n = this._onset(sy, n);
+      this.ql = n; this.qi = 0; this.segT = 0; this.nucT = 0; this.sy = sy;
+    }
+    _syllableBudget(sy) {
+      const S = this.syn.syl[sy]; let t = 0;
+      for (const c of S.on) t += (CONS[c] ? CONS[c].dur : 100);
+      for (const c of S.off) t += (CONS[c] ? CONS[c].dur : 100);
+      if (DIPH[S.v]) t += 150;
+      return Math.max(70, this.syn.p.phLen - t);
+    }
+    _phraseTick(dtms) {
+      const syn = this.syn, P = syn.p;
+      let seg = this.pool[this.qi];
+      this.segT += dtms;
+      if (seg.nuc) this.nucT += dtms;
+      // finished a timed segment: move on (a nucleus holds until told otherwise)
+      if (!seg.nuc && this.segT >= seg.dur) {
+        if (seg.bu > 0) this.burst = Math.max(this.burst, seg.bu);
+        if (this.qi < this.ql - 1) { this.qi++; this.segT = 0; seg = this.pool[this.qi]; }
+        else if (this.pendingRel) { this.reallyRelease(); }
+      }
+      // keep singing through the phrase while the key is held
+      const budget = this.firstSyl ? Math.max(this._syllableBudget(this.sy), P.phWait) : this._syllableBudget(this.sy);
+      if (seg.nuc && this.gate && !this.pendingRel && P.phAuto && this.nucT >= budget) {
+        this.firstSyl = false;
+        let nx = this.sy + 1;
+        if (nx >= syn.syl.length) nx = P.phLoop ? 0 : -1;
+        if (nx >= 0) {
+          this.advanceTo(nx);
+          if (this.order === syn.order) syn.phPos = nx;
+          seg = this.pool[0];
+        }
+      }
+      return seg;
+    }
+
+    /* ---------- modulation ---------- */
+    computeMods(dtms) {
+      const syn = this.syn, P = syn.p, src = this.src, dst = this.dst;
+      src[0] = this.e2.step(dtms, P.e2a, P.e2d, P.e2s, P.e2r, P.e2loop);
+      src[1] = this.e3.step(dtms, P.e3a, P.e3d, P.e3s, P.e3r, P.e3loop);
+      for (let L = 0; L < 2; L++) {
+        const pre = L ? 'l2' : 'l1';
+        const shape = P[pre + 'shape'];
+        let val;
+        if (P[pre + 'retrig']) {
+          let rate = P[pre + 'sync'] ? (P.bpm / 60) / LFO_DIVS[clamp(P[pre + 'div'] | 0, 0, LFO_DIVS.length - 1)] : P[pre + 'rate'];
+          rate *= Math.pow(2, dst[L ? 19 : 17] * 4);
+          this.lph[L] += rate * dtms * 0.001;
+          if (this.lph[L] >= 1) { this.lph[L] -= Math.floor(this.lph[L]); this.lr0[L] = this.lr1[L]; this.lr1[L] = this.rnd(); }
+          val = lfoShape(shape, this.lph[L], this.lr0[L], this.lr1[L]);
+        } else val = lfoShape(shape, syn.gph[L], syn.gr0[L], syn.gr1[L]);
+        src[2 + L] = val * clamp(P[pre + 'amt'] + dst[L ? 20 : 18], 0, 1);
+      }
+      src[4] = this.vel;
+      src[5] = clamp((this.note - 60) / 36, -1, 1);
+      src[6] = syn.mw;
+      const mpe = P.mpe && this.ch > 0;
+      src[7] = Math.max(mpe ? syn.chPress[this.ch] : syn.press, this.pat);
+      src[8] = mpe ? syn.chSlide[this.ch] : syn.slide;
+      src[9] = mpe ? syn.chBend[this.ch] : syn.bend;
+      src[10] = this.rand;
+      dst.fill(0);
+      const R = syn.routes, M = syn.mod;
+      for (let i = 0; i < R.length; i++) { const r = R[i]; dst[r % ND] += src[(r / ND) | 0] * M[r]; }
+    }
+    _targets() {
+      const P = this.syn.p, T = this.tg, d = this.dst;
+      let seg = null;
+      if (this.inPhrase && this.syn.syl.length) {
+        seg = this.pool[this.qi];
+        T.x = seg.x; T.y = seg.y; T.w = seg.w; T.lips = seg.lips; T.phar = seg.phar; T.vel = seg.vel; T.tip = seg.tip; T.lc = seg.lc;
+      } else {
+        const m = clamp(P.morph + d[16], 0, 1);
+        T.x = lerp(P.x, P.bx, m); T.y = lerp(P.y, P.by, m); T.w = lerp(P.w, P.bw, m);
+        T.lips = lerp(P.lips, P.blips, m); T.phar = lerp(P.phar, P.bphar, m); T.vel = lerp(P.vel, P.bvel, m); T.tip = P.tip; T.lc = 0;
+      }
+      // high notes: open the jaw so the first formant can follow the pitch
+      if (!seg || seg.nuc) {
+        const tn = P.tune * sstep(300, 900, this.f);
+        if (tn > 0) { T.y += (1 - T.y) * 0.65 * tn; T.lips += (1 - T.lips) * 0.6 * tn; }
+      }
+      T.x = clamp(T.x + d[3], 0, 1); T.y = clamp(T.y + d[4], seg ? -1 : 0, 1); T.w = clamp(T.w + d[5], 0, 1);
+      T.lips = clamp(T.lips + d[6], 0, 1); T.phar = clamp(T.phar + d[7], 0, 1); T.vel = clamp(T.vel + d[8], 0, 1);
+      T.tip = clamp(T.tip + d[9], 0, 1);
+      return seg;
+    }
+    _shape() {
+      const syn = this.syn, P = syn.p, tr = this.tract, d = this.dst;
+      const Leff = clamp(P.length + d[10] * 8 + clamp(P.larynx + d[11], -1, 1) * 1.2, 8, 26);
+      this.Leff = Leff;
+      const N = clamp(Math.round(Leff * syn.fsT / C), 20, syn.maxN - 1);
+      tr.resize(N);
+      const s = this.art;
+      const info = buildAreas(s, N, tr.A);
+      tr.setShape(s.vel * 2.2);
+      const tight = clamp((0.55 - info.minA) / 0.5, 0, 1);
+      const hiss = clamp(P.fric + d[14], 0, 1);
+      this.fricAmt = hiss * tight * tight * 0.4 + this.fr * 0.45 * (0.25 + 0.75 * tight) + this.burst * 0.9;
+      tr.inj = clamp(info.minI + 1, 2, N - 2);
+      this.closeF = clamp(info.minA / 0.09, 0, 1);
+    }
+    tick() {
+      const syn = this.syn, P = syn.p, dt = TICK / syn.sr, dtms = dt * 1000;
+      this.age += dt;
+      this.computeMods(dtms);
+      const d = this.dst;
+      // pitch: glide on the note number, bends, vibrato and drift
+      const gl = P.glide > 1 ? 1 - Math.exp(-dt / (P.glide * 0.001)) : 1;
+      this.gn += (this.note - this.gn) * gl;
+      this.vibPh += TAU * P.vibRate * dt;
+      if (this.vibPh > TAU) this.vibPh -= TAU;
+      const vEnv = clamp((this.age * 1000 - P.vibDelay) / 400, 0, 1);
+      if (--this.dCount <= 0) { this.dT = this.rnd() * P.human * 9; this.dCount = 400 + Math.floor((this.rnd() + 1) * 400); }
+      this.drift += (this.dT - this.drift) * 0.004;
+      const cents = Math.max(0, P.vib + d[15] * 60) * vEnv * Math.sin(this.vibPh) + this.drift;
+      const nb = (P.mpe && this.ch > 0) ? syn.chBend[this.ch] * P.mpeBend : 0;
+      this.f = clamp(440 * Math.pow(2, (this.gn - 69 + syn.bendSemis + nb + d[0] * 24) / 12 + cents / 1200), 20, 3000);
+      // articulation: phrase segment or knobs, plus modulation
+      const seg = this.inPhrase ? this._phraseTick(dtms) : null;
+      this._targets();
+      const tt = seg ? seg.tt : P.artTime;
+      const ka = 1 - Math.exp(-dtms / (tt + 1));
+      const s = this.art, T = this.tg;
+      for (let k = 0; k < 8; k++) { const key = ART[k]; s[key] += (T[key] - s[key]) * ka; }
+      const kf = 1 - Math.exp(-dtms / 6);
+      this.vo += ((seg ? seg.vo : 1) - this.vo) * kf;
+      this.asp += ((seg ? seg.asp : 0) - this.asp) * kf;
+      this.fr += ((seg ? seg.fr : 0) - this.fr) * kf;
+      this.burst *= Math.exp(-dtms / 7);
+      this._shape();
+      // source
+      const tt2 = clamp(P.tension + (this.vel - 0.6) * 0.3 + d[12], 0, 1);
+      this.ten += (tt2 - this.ten) * 0.05;
+      this.aspGain = (clamp(P.breath + d[13], 0, 1) * (1.15 - 0.75 * this.ten) * 0.5 + this.asp * 0.6) * (0.12 + 0.88 * this.closeF) + this.burst * 0.25;
+      this.ampMod = clamp(1 + d[1], 0, 2);
+      const pan = clamp(this.pan0 + d[2], -1, 1);
+      this.gl = Math.cos((pan + 1) * PI / 4); this.gr = Math.sin((pan + 1) * PI / 4);
+    }
+    newPeriod() {
+      const syn = this.syn, P = syn.p;
+      const f = this.f * (1 + this.rnd() * 0.005 * P.human);
+      this.wlen = 1 / f; this.invLen = f;
+      const Rd = clamp(3 * (1 - this.ten), 0.5, 2.7);
+      lfSetup(Rd, this);
+      this.shim = 1 + this.rnd() * 0.05 * P.human;
+      this.gGain = 0.5 / rmsAt(Rd) * this.shim;
+      this.tract.gRefl = 0.66 + 0.26 * this.ten;
+    }
+    sample() {
+      const syn = this.syn;
+      switch (this.est) {
+        case 1: this.env += (1.25 - this.env) * this.aC; if (this.env >= 1) { this.env = 1; this.est = 2; } break;
+        case 2: this.env += (syn.p.sustain - this.env) * this.dC; break;
+        case 3: this.env *= this.rC; if (this.env < 4e-4) { this.finish(); this.o1 = 0; this.o2 = 0; return; } break;
+      }
+      const amp = this.env * this.vamp * this.ampMod;
+      const tr = this.tract, dtT = syn.dtT;
+      const fr = this.fricAmt * amp, hpC = syn.hpC, lpC = syn.lpC, gv = this.gGain * this.vo;
+      for (let k = 0; k < 2; k++) {
+        const tn = this.t * this.invLen;
+        const open = tn < this.Te;
+        const g = open ? this.E0 * Math.exp(this.alpha * tn) * Math.sin(this.omega * tn)
+          : (this.shift - Math.exp(-this.eps * (tn - this.Te))) * this.invDelta;
+        this.t += dtT;
+        if (this.t >= this.wlen) { this.t -= this.wlen; this.newPeriod(); }
+        const n = this.rnd();
+        this.hp += hpC * (n - this.hp);
+        this.lpS += lpC * ((n - this.hp) - this.lpS);
+        const src = (g * gv + this.lpS * this.aspGain * (open || this.vo < 0.5 ? 1 : 0.35)) * amp;
+        const o = tr.step(src, fr * n);
+        if (k === 0) this.o1 = o; else this.o2 = o;
+      }
+    }
+  }
+
+  /* ---- halfband decimator (96k -> 48k) ---- */
+  class Halfband {
+    constructor() {
+      const K = 15, taps = [], idx = [];
+      let sum = 0;
+      for (let j = 0; j <= 2 * K; j++) {
+        const k = j - K;
+        let h;
+        if (k === 0) h = 0.5;
+        else if (Math.abs(k) % 2 === 0) continue;
+        else h = Math.sin(PI * k / 2) / (PI * k);
+        const wv = 0.42 - 0.5 * Math.cos(TAU * (j + 0.5) / (2 * K + 1)) + 0.08 * Math.cos(2 * TAU * (j + 0.5) / (2 * K + 1));
+        h *= wv; idx.push(j); taps.push(h); sum += h;
+      }
+      this.tc = Float64Array.from(taps.map(h => h / sum)); // unity DC gain
+      this.tj = Int32Array.from(idx);
+      this.buf = new Float64Array(64); this.pos = 0;
+    }
+    push2(a, b) {
+      const buf = this.buf;
+      buf[this.pos & 63] = a; this.pos++; buf[this.pos & 63] = b; this.pos++;
+      let y = 0; const tc = this.tc, tj = this.tj, p = this.pos - 1;
+      for (let i = 0; i < tc.length; i++) y += tc[i] * buf[(p - tj[i]) & 63];
+      return y;
+    }
+  }
+
+  /* ---- small stereo reverb ---- */
+  class Reverb {
+    constructor(sr) {
+      const sc = sr / 44100;
+      const combs = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617], aps = [556, 441, 341, 225];
+      const mk = (n) => ({ b: new Float32Array(Math.max(8, Math.round(n * sc))), i: 0, s: 0 });
+      this.cL = combs.map(mk); this.cR = combs.map(n => mk(n + 23));
+      this.aL = aps.map(mk); this.aR = aps.map(n => mk(n + 23));
+      this.fb = 0.82; this.damp = 0.28; this.wl = 0; this.wr = 0;
+    }
+    _ch(x, cs, as) {
+      let o = 0; const fb = this.fb, d = this.damp;
+      for (let k = 0; k < cs.length; k++) {
+        const c = cs[k], y = c.b[c.i];
+        c.s = y * (1 - d) + c.s * d;
+        c.b[c.i] = x + c.s * fb;
+        if (++c.i >= c.b.length) c.i = 0;
+        o += y;
+      }
+      for (let k = 0; k < as.length; k++) {
+        const a = as[k], y = a.b[a.i];
+        const z = o - y;
+        a.b[a.i] = o + y * 0.5; o = z;
+        if (++a.i >= a.b.length) a.i = 0;
+      }
+      return o;
+    }
+    run(l, r) { const x = (l + r) * 0.015; this.wl = this._ch(x, this.cL, this.aL); this.wr = this._ch(x, this.cR, this.aR); }
+  }
+
+  /* ---- the instrument ---- */
+  class Synth {
+    constructor(sr, opts) {
+      opts = opts || {};
+      this.sr = sr;
+      this.os = sr > 60000 ? 1 : 2;
+      this.fsT = sr * this.os;
+      this.dtT = 1 / this.fsT;
+      this.maxN = Math.ceil(27 * this.fsT / C) + 4;
+      this.p = Object.assign({}, DEFAULTS);
+      this.mod = new Float32Array(NS * ND); this.routes = [];
+      for (const [s, d, v] of DEFAULT_MODS) this.mod[SI[s] * ND + DI[d]] = v;
+      this._routes();
+      this.syl = []; this.phPos = -1; this.lastOnT = -1e9; this.lastSy = -1; this.idleT = 0; this.time = 0;
+      this.nV = opts.maxVoices || 10;
+      this.voices = []; for (let i = 0; i < this.nV; i++) this.voices.push(new Voice(this, i));
+      this.hbL = new Halfband(); this.hbR = new Halfband();
+      this.rev = new Reverb(sr);
+      this.hpC = 1 - Math.exp(-TAU * 450 / this.fsT);
+      this.lpC = 1 - Math.exp(-TAU * 4200 / this.fsT);
+      this.bendSemis = 0; this.bend = 0; this.press = 0; this.slide = 0; this.mw = 0; this.sustainOn = false;
+      this.chPress = new Float64Array(16); this.chSlide = new Float64Array(16); this.chBend = new Float64Array(16);
+      this.gph = [0, 0]; this.gr0 = [0, 0]; this.gr1 = [0, 0]; this.gseed = 991;
+      this.stack = []; this.order = 0; this.cc = 1; this.lastNote = -1;
+      this.dcxL = 0; this.dcyL = 0; this.dcxR = 0; this.dcyR = 0; this.toneL = 0; this.toneR = 0;
+      this.outGain = opts.outGain || 2.5;
+      this.peak = 0;
+      this._tone();
+    }
+    _routes() { const r = []; for (let i = 0; i < NS * ND; i++) if (this.mod[i] !== 0) r.push(i); this.routes = r; }
+    setMod(s, d, v) {
+      const si = typeof s === 'number' ? s : SI[s], di = typeof d === 'number' ? d : DI[d];
+      if (si === undefined || di === undefined) return;
+      this.mod[si * ND + di] = clamp(v, -1, 1); this._routes();
+    }
+    setMods(arr) { this.mod.fill(0); for (let i = 0; i < Math.min(arr.length, NS * ND); i++) this.mod[i] = clamp(+arr[i] || 0, -1, 1); this._routes(); }
+    setPhrase(syl) {
+      const ok = [];
+      for (const s of syl || []) {
+        const v = (VMAP[s.v] || VCUSTOM[s.v] || DIPH[s.v]) ? s.v : 'AX';
+        ok.push({ on: (s.on || []).filter(c => CONS[c] || AFFRIC[c]), v, off: (s.off || []).filter(c => CONS[c] || AFFRIC[c]) });
+      }
+      this.syl = ok; this.phPos = -1;
+      for (const vc of this.voices) if (vc.active) { vc.inPhrase = false; }
+    }
+    _grnd() { let s = this.gseed; s ^= s << 13; s ^= s >>> 17; s ^= s << 5; this.gseed = s | 0; return (s >>> 0) / 2147483648 - 1; }
+    _tone() {
+      const hi = this.sr * 0.45, fc = 700 * Math.pow(hi / 700, this.p.bright);
+      this.toneC = 1 - Math.exp(-TAU * fc / this.sr);
+    }
+    setParam(k, v) {
+      this.p[k] = v;
+      if (k === 'bright') this._tone();
+      if (k === 'bend') this.bendSemis = this.bend * v;
+      if (k === 'voices') this._limitVoices();
+      if (k === 'attack' || k === 'decay' || k === 'release') for (const vc of this.voices) if (vc.active) vc.setEnvTimes();
+      if (k === 'mono' || k === 'mpe') this.allOff();
+      if (k === 'phOn' && !v) for (const vc of this.voices) vc.inPhrase = false;
+    }
+    setParams(o) { for (const k in o) this.setParam(k, o[k]); }
+    _limitVoices() {
+      let n = 0;
+      for (const vc of this.voices) if (vc.active && vc.gate && ++n > this.p.voices) vc.release();
+    }
+    setBend(v, ch) {
+      if (this.p.mpe && ch > 0) { this.chBend[ch & 15] = v; return; }
+      this.bend = v; this.bendSemis = v * this.p.bend;
+    }
+    setPressure(v, ch) { if (this.p.mpe && ch > 0) this.chPress[ch & 15] = v; else this.press = v; }
+    setSlide(v, ch) { if (this.p.mpe && ch > 0) this.chSlide[ch & 15] = v; else this.slide = v; }
+    polyAT(note, v) { for (const vc of this.voices) if (vc.active && vc.note === note) vc.pat = v; }
+    /* which syllable a new note sings: next one, unless it is part of the same chord */
+    _nextSyllable() {
+      if (!this.p.phOn || !this.syl.length) return -1;
+      if (this.time - this.lastOnT < 0.03 && this.lastSy >= 0) { this.lastOnT = this.time; return this.lastSy; }
+      let nx = this.phPos + 1;
+      if (nx >= this.syl.length) nx = this.p.phLoop ? 0 : this.syl.length - 1;
+      this.phPos = nx; this.lastSy = nx; this.lastOnT = this.time;
+      return nx;
+    }
+    _monoTarget() {
+      const st = this.stack; if (!st.length) return null;
+      if (this.p.prio === 1) { let b = st[0]; for (const e of st) if (e.n < b.n) b = e; return b; }
+      if (this.p.prio === 2) { let b = st[0]; for (const e of st) if (e.n > b.n) b = e; return b; }
+      return st[st.length - 1];
+    }
+    noteOn(note, vel, ch) {
+      vel = clamp(vel, 0.02, 1); ch = ch | 0;
+      this.order++;
+      if (this.p.mono) {
+        this.stack = this.stack.filter(e => e.n !== note); this.stack.push({ n: note, v: vel, ch });
+        const vc = this.voices[0], tgt = this._monoTarget();
+        if (vc.active && vc.gate && !vc.pendingRel) {
+          if (tgt.n !== vc.note || tgt.n === note) { vc.order = this.order; vc.legato(tgt.n, tgt.v, tgt.ch, tgt.n === note ? this._nextSyllable() : -1, true); }
+        } else vc.start(tgt.n, tgt.v, this.order, tgt.ch, this._nextSyllable());
+        this.lastNote = note;
+        return;
+      }
+      const sy = this._nextSyllable();
+      const lim = Math.min(this.p.voices, this.nV);
+      let pick = null;
+      for (let i = 0; i < lim; i++) { const vc = this.voices[i]; if (vc.active && vc.note === note && !vc.gate) { pick = vc; break; } }
+      if (!pick) for (let i = 0; i < lim; i++) if (!this.voices[i].active) { pick = this.voices[i]; break; }
+      if (!pick) {
+        let best = Infinity;
+        for (let i = 0; i < lim; i++) { const vc = this.voices[i]; const sc = (vc.gate ? 10 : 0) + vc.env + vc.order * 1e-9; if (sc < best) { best = sc; pick = vc; } }
+      }
+      pick.active = false; pick.start(note, vel, this.order, ch, sy);
+      this.lastNote = note;
+    }
+    noteOff(note, ch) {
+      ch = ch | 0;
+      const chOk = (vc) => !this.p.mpe || vc.ch === ch;
+      if (this.p.mono) {
+        this.stack = this.stack.filter(e => !(e.n === note && (!this.p.mpe || e.ch === ch)));
+        const vc = this.voices[0];
+        const tgt = this._monoTarget();
+        if (tgt) { if (tgt.n !== vc.note) vc.legato(tgt.n, tgt.v, tgt.ch, -1, false); }
+        else if (this.sustainOn) vc.sustained = true; else vc.release();
+        return;
+      }
+      for (const vc of this.voices) if (vc.active && vc.gate && !vc.pendingRel && vc.note === note && chOk(vc) && !vc.sustained) { if (this.sustainOn) vc.sustained = true; else vc.release(); }
+    }
+    sustain(on) {
+      this.sustainOn = on;
+      if (!on) for (const vc of this.voices) if (vc.active && vc.sustained) { vc.sustained = false; vc.release(); }
+    }
+    allOff() { this.stack = []; this.sustainOn = false; for (const vc of this.voices) if (vc.active) { vc.sustained = false; vc.pendingRel = false; vc.reallyRelease(); } }
+    activeCount() { let n = 0; for (const vc of this.voices) if (vc.active) n++; return n; }
+    /* state of the newest sounding voice, for the display: [8 art, length, syllable, phrase pos, 11 sources] */
+    telemetry(out) {
+      let best = null;
+      for (const vc of this.voices) if (vc.active && (!best || vc.order > best.order)) best = vc;
+      if (!best) { out[0] = -1; return out; }
+      for (let k = 0; k < 8; k++) out[k] = best.art[ART[k]];
+      out[8] = best.Leff || this.p.length; out[9] = best.inPhrase ? best.sy : -1; out[10] = this.phPos;
+      for (let i = 0; i < NS; i++) out[11 + i] = best.src[i];
+      return out;
+    }
+    _globalTick(dt) {
+      const P = this.p;
+      for (let L = 0; L < 2; L++) {
+        const pre = L ? 'l2' : 'l1';
+        const rate = P[pre + 'sync'] ? (P.bpm / 60) / LFO_DIVS[clamp(P[pre + 'div'] | 0, 0, LFO_DIVS.length - 1)] : P[pre + 'rate'];
+        this.gph[L] += rate * dt;
+        if (this.gph[L] >= 1) { this.gph[L] -= Math.floor(this.gph[L]); this.gr0[L] = this.gr1[L]; this.gr1[L] = this._grnd(); }
+      }
+      this.time += dt;
+      let gated = false;
+      for (const vc of this.voices) if (vc.active && vc.gate) { gated = true; break; }
+      if (gated) this.idleT = 0; else { this.idleT += dt; if (this.idleT > P.phReset && this.phPos >= 0) this.phPos = -1; }
+    }
+    render(outL, outR, n) {
+      const P = this.p, voices = this.voices, nV = this.nV;
+      const master = P.master * P.master * this.outGain * 2, room = P.room;
+      let pk = 0;
+      for (let s = 0; s < n; s++) {
+        if (--this.cc <= 0) {
+          this.cc = TICK; this._globalTick(TICK / this.sr);
+          for (let v = 0; v < nV; v++) if (voices[v].active) voices[v].tick();
+        }
+        let a1L = 0, a1R = 0, a2L = 0, a2R = 0;
+        for (let v = 0; v < nV; v++) {
+          const vc = voices[v];
+          if (!vc.active) continue;
+          vc.sample();
+          a1L += vc.o1 * vc.gl; a1R += vc.o1 * vc.gr; a2L += vc.o2 * vc.gl; a2R += vc.o2 * vc.gr;
+        }
+        let l, r;
+        if (this.os === 2) { l = this.hbL.push2(a1L, a2L); r = this.hbR.push2(a1R, a2R); }
+        else { l = a1L; r = a1R; }
+        let y = l - this.dcxL + 0.995 * this.dcyL; this.dcxL = l; this.dcyL = y;
+        this.toneL += this.toneC * (y - this.toneL); l = this.toneL;
+        y = r - this.dcxR + 0.995 * this.dcyR; this.dcxR = r; this.dcyR = y;
+        this.toneR += this.toneC * (y - this.toneR); r = this.toneR;
+        l *= master; r *= master;
+        if (room > 0.001) { this.rev.run(l, r); l += this.rev.wl * room * 3; r += this.rev.wr * room * 3; }
+        l = Math.tanh(l); r = Math.tanh(r);
+        outL[s] = l; outR[s] = r;
+        const m = l < 0 ? -l : l; if (m > pk) pk = m;
+      }
+      this.peak = pk;
+    }
+    handle(m) {
+      switch (m.t) {
+        case 'p': this.setParam(m.k, m.v); break;
+        case 'ps': this.setParams(m.o); break;
+        case 'on': this.noteOn(m.n, m.v, m.ch); break;
+        case 'off': this.noteOff(m.n, m.ch); break;
+        case 'bend': this.setBend(m.v, m.ch | 0); break;
+        case 'sus': this.sustain(!!m.v); break;
+        case 'press': this.setPressure(m.v, m.ch | 0); break;
+        case 'slide': this.setSlide(m.v, m.ch | 0); break;
+        case 'pat': this.polyAT(m.n, m.v); break;
+        case 'mw': this.mw = m.v; break;
+        case 'mod': this.setMod(m.s, m.d, m.v); break;
+        case 'mods': this.setMods(m.a); break;
+        case 'phrase': this.setPhrase(m.s); break;
+        case 'phReset': this.phPos = -1; break;
+        case 'panic': this.allOff(); break;
+      }
+    }
+  }
+
+  /* ---- analysis helpers (used by the UI and the tuner) ---- */
+  function fft(re, im) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = -TAU / len, wr = Math.cos(ang), wi = Math.sin(ang), half = len >> 1;
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let k = 0; k < half; k++) {
+          const a = i + k, b = a + half;
+          const xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+          re[b] = re[a] - xr; im[b] = im[a] - xi; re[a] += xr; im[a] += xi;
+          const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
+        }
+      }
+    }
+  }
+  /* impulse response of the tract alone: returns {df, mag[]} (magnitude, linear) */
+  function tractResponse(art, Lcm, sr, opts) {
+    opts = opts || {};
+    const os = sr > 60000 ? 1 : 2, fsT = sr * os;
+    const N = clamp(Math.round(Lcm * fsT / C), 16, 200);
+    const tr = new Tract(N + 4, fsT);
+    if (opts.loss) tr.loss = opts.loss;
+    if (opts.ideal) { tr.lipG = 1; tr.gRefl = 1; }
+    tr.resize(N);
+    buildAreas(art, N, tr.A);
+    tr.setShape((art.vel || 0) * 2.2);
+    if (opts.ideal) tr.lipC = 1;
+    const M = opts.len || 3072, nfft = opts.nfft || 8192;
+    const re = new Float64Array(nfft), im = new Float64Array(nfft);
+    for (let i = 0; i < M; i++) {
+      const w = 0.5 + 0.5 * Math.cos(PI * i / M);
+      re[i] = tr.step(i === 0 ? 1 : 0, 0) * w;
+    }
+    fft(re, im);
+    const half = nfft / 2, mag = new Float64Array(half);
+    for (let i = 0; i < half; i++) mag[i] = Math.hypot(re[i], im[i]);
+    return { df: fsT / nfft, mag, N, fsT };
+  }
+  function findFormants(resp, count, fmin, fmax) {
+    const { df, mag } = resp, out = [];
+    const i0 = Math.max(2, Math.floor((fmin || 120) / df)), i1 = Math.min(mag.length - 2, Math.floor((fmax || 5500) / df));
+    for (let i = i0; i < i1 && out.length < count; i++) {
+      const a = mag[i - 1], b = mag[i], c = mag[i + 1];
+      if (b > a && b >= c && b > 0) {
+        const la = Math.log(a + 1e-12), lb = Math.log(b), lc = Math.log(c + 1e-12);
+        const d = 0.5 * (la - lc) / (la - 2 * lb + lc);
+        out.push({ f: (i + d) * df, a: b });
+      }
+    }
+    return out;
+  }
+  /* vowel chart: u = 0 front .. 1 back, v = 0 close .. 1 open */
+  const padF1 = (v) => 280 + 460 * v, padF2lo = (v) => 1000 - 250 * v, padF2hi = (v) => 2250 - 750 * v;
+  const padF2 = (u, v) => padF2lo(v) + (padF2hi(v) - padF2lo(v)) * (1 - u);
+  function padArt(u, v, out) {
+    out = out || {};
+    const NU = GRID.NU, NV = GRID.NV;
+    const fi = clamp(u, 0, 1) * (NU - 1), fj = clamp(v, 0, 1) * (NV - 1);
+    const i0 = Math.min(NU - 2, Math.floor(fi)), j0 = Math.min(NV - 2, Math.floor(fj)), a = fi - i0, b = fj - j0;
+    const keys = ['x', 'y', 'w', 'lips', 'phar'];
+    for (let k = 0; k < 5; k++) {
+      const c = (j, i) => GRID.d[(j * NU + i) * 5 + k];
+      out[keys[k]] = lerp(lerp(c(j0, i0), c(j0, i0 + 1), a), lerp(c(j0 + 1, i0), c(j0 + 1, i0 + 1), a), b);
+    }
+    out.vel = 0;
+    return out;
+  }
+  function vowelArt(name) { return VOWELS[name] || { x: 0.5, y: 0.6, w: 0.5, lips: 0.5, phar: 0.5, vel: 0 }; }
+
+  return { MOD_SRC, MOD_DST, DST_SCALE, LFO_DIV_NAMES, LFO_DIVS, DEFAULT_MODS, CONS, VMAP, VCUSTOM, DIPH, AFFRIC, NS, ND, SI, DI, padArt, padF1, padF2, padF2lo, padF2hi, GRID, Synth, Tract, Voice, Halfband, buildAreas, tractResponse, findFormants, fft, lfSetup, lfWave, rmsAt, VOWELS, VOWEL_ORDER, VOWEL_FORMANTS, DEFAULTS, vowelArt, C, TICK };
+}
+
+/* Text -> sung syllables. English spelling rules + a small list of common irregular words.
+ * Output syllables are {on:[consonants], v:vowel, off:[consonants], label} in ARPAbet. */
+function LyricsFactory() {
+  'use strict';
+  const VOW = new Set(['AA', 'AE', 'AH', 'AX', 'AO', 'AW', 'AY', 'EH', 'ER', 'EY', 'IH', 'IY', 'OW', 'OY', 'UH', 'UW']);
+  const CONS = new Set(['B', 'CH', 'D', 'DH', 'F', 'G', 'HH', 'JH', 'K', 'L', 'M', 'N', 'NG', 'P', 'R', 'S', 'SH', 'T', 'TH', 'V', 'W', 'Y', 'Z', 'ZH']);
+  const DICT_SRC = `a:AX|about:AX B AW T|above:AX B AH V|across:AX K R AO S|after:AE F T ER|again:AX G EH N|against:AX G EH N S T|ago:AX G OW|air:EH R|all:AO L|alone:AX L OW N|along:AX L AO NG|always:AO L W EY Z|am:AE M|among:AX M AH NG|an:AE N|and:AE N D|angel:EY N JH AX L|another:AX N AH DH ER|answer:AE N S ER|any:EH N IY|are:AA R|around:AX R AW N D|as:AE Z|at:AE T|away:AX W EY|baby:B EY B IY|be:B IY|beautiful:B Y UW T IH F AX L|because:B IH K AH Z|been:B IH N|before:B IH F AO R|behind:B IH HH AY N D|believe:B IH L IY V|between:B IH T W IY N|blood:B L AH D|blue:B L UW|body:B AA D IY|bone:B OW N|both:B OW TH|bread:B R EH D|break:B R EY K|breath:B R EH TH|broken:B R OW K AX N|brother:B R AH DH ER|build:B IH L D|busy:B IH Z IY|but:B AH T|buy:B AY|by:B AY|child:CH AY L D|choir:K W AY ER|city:S IH T IY|climb:K L AY M|cold:K OW L D|color:K AH L ER|come:K AH M|coming:K AH M IH NG|could:K UH D|country:K AH N T R IY|dance:D AE N S|danger:D EY N JH ER|dead:D EH D|do:D UW|does:D AH Z|done:D AH N|door:D AO R|down:D AW N|dream:D R IY M|early:ER L IY|earth:ER TH|eat:IY T|echo:EH K OW|either:IY DH ER|else:EH L S|end:EH N D|enough:IH N AH F|even:IY V AX N|ever:EH V ER|every:EH V R IY|everything:EH V R IY TH IH NG|eye:AY|eyes:AY Z|father:F AA DH ER|find:F AY N D|fire:F AY ER|floor:F L AO R|flower:F L AW ER|for:F AO R|forever:F ER EH V ER|four:F AO R|friend:F R EH N D|from:F R AH M|ghost:G OW S T|give:G IH V|go:G OW|going:G OW IH NG|gold:G OW L D|gone:G AO N|good:G UH D|great:G R EY T|guess:G EH S|guy:G AY|had:HH AE D|has:HH AE Z|have:HH AE V|he:HH IY|head:HH EH D|hear:HH IH R|heart:HH AA R T|heaven:HH EH V AX N|her:HH ER|here:HH IH R|him:HH IH M|his:HH IH Z|hold:HH OW L D|home:HH OW M|hour:AW ER|how:HH AW|i:AY|if:IH F|in:IH N|into:IH N T UW|is:IH Z|island:AY L AX N D|it:IH T|its:IH T S|just:JH AH S T|kind:K AY N D|knew:N UW|know:N OW|laugh:L AE F|learn:L ER N|light:L AY T|like:L AY K|listen:L IH S AX N|little:L IH T AX L|live:L IH V|lonely:L OW N L IY|long:L AO NG|look:L UH K|love:L AH V|machine:M AX SH IY N|many:M EH N IY|me:M IY|mind:M AY N D|money:M AH N IY|moon:M UW N|more:M AO R|mother:M AH DH ER|move:M UW V|music:M Y UW Z IH K|my:M AY|never:N EH V ER|new:N UW|night:N AY T|no:N OW|none:N AH N|nothing:N AH TH IH NG|now:N AW|ocean:OW SH AX N|of:AH V|off:AO F|oh:OW|old:OW L D|on:AA N|once:W AH N S|one:W AH N|only:OW N L IY|onto:AA N T UW|open:OW P AX N|or:AO R|other:AH DH ER|our:AW ER|out:AW T|over:OW V ER|own:OW N|people:P IY P AX L|please:P L IY Z|pretty:P R IH T IY|pure:P Y UH R|put:P UH T|quiet:K W AY AX T|rain:R EY N|really:R IH L IY|rhythm:R IH DH AX M|river:R IH V ER|road:R OW D|said:S EH D|says:S EH Z|sea:S IY|see:S IY|she:SH IY|should:SH UH D|silent:S AY L AX N T|sing:S IH NG|singing:S IH NG IH NG|sky:S K AY|so:S OW|some:S AH M|someone:S AH M W AH N|something:S AH M TH IH NG|sometimes:S AH M T AY M Z|son:S AH N|song:S AO NG|soul:S OW L|strange:S T R EY N JH|sugar:SH UH G ER|sure:SH UH R|talk:T AO K|the:DH AX|their:DH EH R|them:DH EH M|then:DH EH N|there:DH EH R|these:DH IY Z|they:DH EY|thing:TH IH NG|think:TH IH NG K|this:DH IH S|those:DH OW Z|though:DH OW|thought:TH AO T|through:TH R UW|time:T AY M|to:T UW|today:T AX D EY|together:T AX G EH DH ER|tomorrow:T AX M AA R OW|tonight:T AX N AY T|too:T UW|touch:T AH CH|tough:T AH F|toward:T AO R D|true:T R UW|two:T UW|under:AH N D ER|until:AH N T IH L|up:AH P|us:AH S|very:V EH R IY|voice:V OY S|walk:W AO K|want:W AA N T|war:W AO R|warm:W AO R M|was:W AH Z|watch:W AA CH|water:W AO T ER|we:W IY|were:W ER|what:W AH T|when:W EH N|where:W EH R|which:W IH CH|while:W AY L|who:HH UW|whole:HH OW L|whose:HH UW Z|why:W AY|wild:W AY L D|wind:W IH N D|with:W IH DH|without:W IH TH AW T|woman:W UH M AX N|women:W IH M AX N|wonder:W AH N D ER|wood:W UH D|word:W ER D|work:W ER K|world:W ER L D|worse:W ER S|would:W UH D|yeah:Y EH|year:Y IH R|yes:Y EH S|yesterday:Y EH S T ER D EY|you:Y UW|young:Y AH NG|your:Y AO R|la:L AA|da:D AA|ooh:UW|ah:AA|mm:M AH M|hmm:HH AH M|hello:HH EH L OW`;
+  const DICT = {};
+  DICT_SRC.split('|').forEach((e) => { const i = e.indexOf(':'); DICT[e.slice(0, i)] = e.slice(i + 1).split(' '); });
+
+  const UNV = new Set(['P', 'T', 'K', 'F', 'TH', 'S', 'SH', 'CH']);
+  const isV = (c) => 'aeiou'.indexOf(c) >= 0;
+  const LONG = { a: ['EY'], e: ['IY'], i: ['AY'], o: ['OW'], u: ['UW'], y: ['AY'] };
+  const SHORT = { a: ['AE'], e: ['EH'], i: ['IH'], o: ['AA'], u: ['AH'], y: ['IH'] };
+  const SIMPLE = { b: 'B', d: 'D', f: 'F', h: 'HH', j: 'JH', k: 'K', l: 'L', m: 'M', n: 'N', p: 'P', r: 'R', s: 'S', t: 'T', v: 'V', w: 'W', z: 'Z', q: 'K' };
+  // longest match first; each entry: [letters, phones, test(word, index) optional]
+  const RULES = [
+    ['tion', ['SH', 'AX', 'N']], ['sion', ['ZH', 'AX', 'N']], ['ture', ['CH', 'ER']], ['ough', ['OW']], ['augh', ['AO']],
+    ['eigh', ['EY']], ['ight', ['AY', 'T']], ['tch', ['CH']], ['dge', ['JH']], ['igh', ['AY']], ['sch', ['S', 'K']],
+    ['air', ['EH', 'R']], ['ear', ['IH', 'R']], ['eer', ['IH', 'R']], ['oor', ['AO', 'R']], ['our', ['AW', 'ER']],
+    ['ous', ['AX', 'S']], ['all', ['AO', 'L']], ['are', ['EH', 'R'], (w, i) => i + 3 === w.length], ['ore', ['AO', 'R'], (w, i) => i + 3 === w.length],
+    ['ire', ['AY', 'ER'], (w, i) => i + 3 === w.length], ['ure', ['Y', 'UH', 'R'], (w, i) => i + 3 === w.length],
+    ['ch', ['CH']], ['sh', ['SH']], ['th', ['TH']], ['ph', ['F']], ['wh', ['W']], ['ck', ['K']], ['ng', ['NG']], ['nk', ['NG', 'K']],
+    ['qu', ['K', 'W']], ['kn', ['N'], (w, i) => i === 0], ['wr', ['R'], (w, i) => i === 0], ['gh', ['G'], (w, i) => i === 0], ['gh', []],
+    ['mb', ['M'], (w, i) => i + 2 === w.length],
+    ['ee', ['IY']], ['ea', ['IY']], ['ai', ['EY']], ['ay', ['EY']], ['oa', ['OW']], ['oo', ['UW']], ['ou', ['AW']],
+    ['ow', ['OW'], (w, i) => i + 2 === w.length], ['ow', ['AW']], ['oi', ['OY']], ['oy', ['OY']], ['au', ['AO']], ['aw', ['AO']],
+    ['ew', ['UW']], ['ie', ['AY'], (w, i) => i + 2 === w.length], ['ie', ['IY']], ['ei', ['EY']], ['ue', ['UW']], ['ui', ['UW']],
+    ['ar', ['AA', 'R']], ['or', ['AO', 'R']], ['er', ['ER']], ['ir', ['ER']], ['ur', ['ER']], ['yr', ['ER']],
+    ['les', ['AX', 'L', 'Z'], (w, i) => i + 3 === w.length && i > 0 && !isV(w[i - 1])],
+    ['le', ['AX', 'L'], (w, i) => i + 2 === w.length && i > 0 && !isV(w[i - 1])],
+    ['es', ['AX', 'Z'], (w, i) => i + 2 === w.length && i > 1 && /(s|sh|ch|x|z|ce|ge)$/.test(w.slice(0, i))],
+    ['ed', ['AX', 'D'], (w, i) => i + 2 === w.length && i > 1 && /[td]$/.test(w.slice(0, i))],
+    ['ed', ['D'], (w, i) => i + 2 === w.length && i > 1]
+  ];
+  function rulesWord(w) {
+    w = w.toLowerCase().replace(/[^a-z]/g, '');
+    if (!w) return [];
+    const out = [];
+    let magic = -1;
+    const m = /([aeiouy])([^aeiouywx])e(s|d)?$/.exec(w);
+    if (m && w.length > 2 && !/[aeiou]{2}/.test(w.slice(m.index - 1, m.index + 1))) magic = m.index;
+    let i = 0;
+    while (i < w.length) {
+      if (i === magic) { out.push(...LONG[w[i]]); i++; continue; }
+      if (magic >= 0 && i === w.length - 1 - (m[3] ? 1 : 0) && w[i] === 'e') { i++; continue; }
+      let hit = false;
+      for (const [pat, ph, test] of RULES) {
+        if (w.startsWith(pat, i) && (!test || test(w, i))) { out.push(...ph); i += pat.length; hit = true; break; }
+      }
+      if (hit) continue;
+      const c = w[i], nx = w[i + 1] || '';
+      if (c === w[i + 1] && !isV(c)) { i++; continue; }                     // doubled consonant
+      if (c === 'c') { out.push('eiy'.indexOf(nx) >= 0 && nx ? 'S' : 'K'); i++; continue; }
+      if (c === 'g') { out.push('eiy'.indexOf(nx) >= 0 && nx && i > 0 ? 'JH' : 'G'); i++; continue; }
+      if (c === 'x') { out.push('K', 'S'); i++; continue; }
+      if (c === 's') { out.push(i === w.length - 1 && i > 0 && !UNV.has(out[out.length - 1]) ? 'Z' : 'S'); i++; continue; }
+      if (c === 'y') {
+        if (i === 0) out.push('Y');
+        else if (i === w.length - 1) out.push(w.length <= 3 ? 'AY' : 'IY');
+        else out.push(isV(nx) ? 'Y' : 'IH');
+        i++; continue;
+      }
+      if (c === 'e' && i === w.length - 1) { if (!/[aeiouy]/.test(w.slice(0, i))) out.push('IY'); i++; continue; }
+      if (isV(c) && /^[^aeiouy](tion|sion|ture|ia|io)/.test(w.slice(i + 1)) ) { out.push(...LONG[c]); i++; continue; }
+      if (isV(c)) {
+        const last = i === w.length - 1;
+        if (last) out.push(...(c === 'o' ? ['OW'] : c === 'a' ? ['AX'] : c === 'i' ? (w.length <= 3 ? ['AY'] : ['IY']) : c === 'u' ? ['UW'] : SHORT[c]));
+        else out.push(...SHORT[c]);
+        i++; continue;
+      }
+      if (SIMPLE[c]) out.push(SIMPLE[c]);
+      i++;
+    }
+    if (/[^e]ed$/.test(w) && out[out.length - 1] === 'D' && UNV.has(out[out.length - 2])) out[out.length - 1] = 'T';
+    if (!out.some((p) => VOW.has(p))) out.push('AX');
+    return out;
+  }
+
+  const ONSET2 = new Set(['P L', 'P R', 'B L', 'B R', 'T R', 'D R', 'K L', 'K R', 'G L', 'G R', 'F L', 'F R', 'TH R', 'SH R', 'S P', 'S T', 'S K', 'S M', 'S N', 'S L', 'S W', 'T W', 'K W', 'D W', 'P Y', 'B Y', 'K Y', 'M Y', 'F Y', 'HH Y']);
+  function syllabify(ph) {
+    const vIdx = []; ph.forEach((p, i) => { if (VOW.has(p)) vIdx.push(i); });
+    if (!vIdx.length) return [];
+    const syl = vIdx.map((vi) => ({ on: [], v: ph[vi], off: [] }));
+    for (let i = 0; i < vIdx[0]; i++) syl[0].on.push(ph[i]);
+    for (let i = vIdx[vIdx.length - 1] + 1; i < ph.length; i++) syl[syl.length - 1].off.push(ph[i]);
+    for (let k = 0; k < vIdx.length - 1; k++) {
+      const cl = ph.slice(vIdx[k] + 1, vIdx[k + 1]);
+      let nOn = Math.min(cl.length, 1);
+      if (cl.length >= 2 && ONSET2.has(cl.slice(-2).join(' '))) nOn = 2;
+      if (cl.length >= 3 && cl[cl.length - 3] === 'S' && ONSET2.has(cl.slice(-2).join(' '))) nOn = 3;
+      if (cl.length === 1 && cl[0] === 'NG') nOn = 0;
+      syl[k].off.push(...cl.slice(0, cl.length - nOn));
+      syl[k + 1].on.push(...cl.slice(cl.length - nOn));
+    }
+    return syl;
+  }
+  const SAY = { AA: 'ah', AE: 'a', AH: 'uh', AX: 'uh', AO: 'aw', AW: 'ow', AY: 'eye', EH: 'e', ER: 'er', EY: 'ay', IH: 'i', IY: 'ee', OW: 'oh', OY: 'oy', UH: 'oo', UW: 'oo',
+    B: 'b', CH: 'ch', D: 'd', DH: 'th', F: 'f', G: 'g', HH: 'h', JH: 'j', K: 'k', L: 'l', M: 'm', N: 'n', NG: 'ng', P: 'p', R: 'r', S: 's', SH: 'sh', T: 't', TH: 'th', V: 'v', W: 'w', Y: 'y', Z: 'z', ZH: 'zh' };
+  const label = (s) => s.on.map((p) => SAY[p]).join('') + SAY[s.v] + s.off.map((p) => SAY[p]).join('');
+
+  /* text -> {words:[{text, src, syl:[...]}], flat:[...]}
+   * [respell] uses spelling rules only; {HH EH L OW} gives phonemes directly */
+  function parse(text) {
+    const words = [];
+    const re = /\{([^}]*)\}|\[([^\]]*)\]|([A-Za-z][A-Za-z'\-]*)/g;
+    let m;
+    while ((m = re.exec(text || ''))) {
+      let ph, src, shown;
+      if (m[1] !== undefined) {
+        ph = m[1].toUpperCase().split(/[\s,]+/).map((p) => p.replace(/[0-9]/g, '')).filter((p) => VOW.has(p) || CONS.has(p));
+        src = 'phonemes'; shown = '{' + m[1].trim() + '}';
+      } else if (m[2] !== undefined) {
+        ph = []; for (const part of m[2].split(/\s+/)) if (part) ph.push(...rulesWord(part));
+        src = 'respelled'; shown = '[' + m[2].trim() + ']';
+      } else {
+        const key = m[3].toLowerCase().replace(/-/g, '');
+        const k2 = key.replace(/'s$/, '').replace(/'/g, '');
+        if (DICT[key.replace(/'/g, '')]) { ph = DICT[key.replace(/'/g, '')].slice(); src = 'dictionary'; }
+        else if (DICT[k2] && /'s$/.test(key)) { ph = DICT[k2].concat(['Z']); src = 'dictionary'; }
+        else { ph = rulesWord(key); src = 'rules'; }
+        shown = m[3];
+      }
+      const syl = syllabify(ph);
+      syl.forEach((s) => { s.label = label(s); });
+      if (syl.length) words.push({ text: shown, src, syl });
+    }
+    const flat = [];
+    words.forEach((w, wi) => w.syl.forEach((s) => flat.push(Object.assign({ w: wi }, s))));
+    return { words, flat };
+  }
+  return { parse, rulesWord, syllabify, DICT };
+}
+
+
+(function () {
+  'use strict';
+  const E = EngineFactory();
+  const D = E.DEFAULTS;
+  const P = Object.assign({}, D);
+  const $ = (s) => document.querySelector(s);
+  const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+  const noteName = (n) => NOTE_NAMES[n % 12].replace('♯', '#') + (Math.floor(n / 12) - 1);
+
+  /* ---------------- audio plumbing ---------------- */
+  let actx = null, node = null, local = null, analyser = null, mode = 'off', ready = false, starting = null;
+  // inside the JUCE plugin window the page talks to the C++ engine instead of making sound itself
+  const JUCE = (typeof window.__JUCE__ !== 'undefined' && window.__JUCE__.backend && window.__JUCE__.initialisationData) ? window.__JUCE__.backend : null;
+  let pluginWave = null, pluginSpec = null, pluginDf = 11.7;
+  if (JUCE) { mode = 'plugin'; ready = true; }
+  const queue = [];
+  let sampleRateNow = 48000;
+
+  function workletMain() {
+    const E2 = EngineFactory();
+    class VT extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.s = new E2.Synth(sampleRate); this.c = 0; this.pk = 0; this.tel = new Float64Array(24);
+        this.port.onmessage = (e) => { this.s.handle(e.data); };
+      }
+      process(inputs, outputs) {
+        const o = outputs[0], l = o[0], r = o[1] || o[0];
+        this.s.render(l, r, l.length);
+        if (this.s.peak > this.pk) this.pk = this.s.peak;
+        if (++this.c >= 10) { this.s.telemetry(this.tel); this.port.postMessage({ pk: this.pk, v: this.s.activeCount(), tel: Array.from(this.tel) }); this.c = 0; this.pk = 0; }
+        return true;
+      }
+    }
+    registerProcessor('vt-synth', VT);
+  }
+
+  function post(m) {
+    if (JUCE) { JUCE.emitEvent('vts', m); return; }
+    if (!ready) { if (m.t === 'on' || m.t === 'off' || m.t === 'sus') { queue.push(m); if (queue.length > 64) queue.shift(); } return; }
+    if (node) node.port.postMessage(m); else if (local) local.handle(m);
+  }
+
+  function setChip(el, key, text) { el.textContent = key + ' '; const b = document.createElement('b'); b.textContent = text; el.appendChild(b); }
+
+  async function startAudio() {
+    if (JUCE) return;
+    if (ready) { if (actx && actx.state !== 'running') actx.resume(); return; }
+    if (starting) return starting;
+    starting = (async () => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { setChip($('#chipAudio'), 'audio', 'not supported'); return; }
+      actx = new AC({ latencyHint: 'interactive' });
+      sampleRateNow = actx.sampleRate;
+      analyser = actx.createAnalyser(); analyser.fftSize = 4096; analyser.smoothingTimeConstant = 0.55; analyser.minDecibels = -100; analyser.maxDecibels = -15;
+      analyser.connect(actx.destination);
+      let ok = false;
+      try {
+        if (actx.audioWorklet && window.Blob && window.URL) {
+          const src = 'const EngineFactory = ' + EngineFactory.toString() + ';\n(' + workletMain.toString() + ')();';
+          // blob URLs work on the web; pages opened from disk need a data URL instead
+          const urls = [URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), 'data:text/javascript;charset=utf-8,' + encodeURIComponent(src)];
+          let loaded = false;
+          for (const url of urls) { try { await actx.audioWorklet.addModule(url); loaded = true; break; } catch (_) {} }
+          if (!loaded) throw new Error('worklet blocked');
+          node = new AudioWorkletNode(actx, 'vt-synth', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+          node.port.onmessage = (e) => { if (e.data) { lastPk = Math.max(lastPk, e.data.pk || 0); voiceCount = e.data.v || 0; if (e.data.tel) tel = e.data.tel; } };
+          node.connect(analyser);
+          mode = 'worklet'; ok = true;
+        }
+      } catch (err) { node = null; }
+      if (!ok) {
+        local = new E.Synth(actx.sampleRate);
+        const sp = actx.createScriptProcessor(1024, 0, 2);
+        sp.onaudioprocess = (e) => {
+          local.render(e.outputBuffer.getChannelData(0), e.outputBuffer.getChannelData(1), e.outputBuffer.length);
+          lastPk = Math.max(lastPk, local.peak); voiceCount = local.activeCount(); local.telemetry(telLocal); tel = telLocal;
+        };
+        sp.connect(analyser);
+        local._sp = sp;
+        mode = 'main thread';
+      }
+      ready = true;
+      post({ t: 'ps', o: P });
+      post({ t: 'mods', a: Array.from(mods) });
+      sendPhrase();
+      post({ t: 'bend', v: bendNow });
+      while (queue.length) post(queue.shift());
+      setChip($('#chipAudio'), 'audio', mode + ' · ' + Math.round(actx.sampleRate / 100) / 10 + ' kHz');
+      $('#startBtn').textContent = 'Audio on';
+      $('#startBtn').disabled = true;
+      respDirty = true;
+    })();
+    return starting;
+  }
+  let lastPk = 0, voiceCount = 0, bendNow = 0, tel = null;
+  const telLocal = new Float64Array(24);
+  // browsers only unlock audio after a click, key press or touch release, so retry on those
+  ['pointerup', 'keydown', 'click', 'touchend'].forEach((ev) => window.addEventListener(ev, () => { if (actx && actx.state === 'suspended') actx.resume(); }, true));
+
+  const PRESETS = {
+    Child: { length: 11.6, larynx: 0.2, tension: 0.55, breath: 0.16, vib: 14, human: 0.45, tune: 0.8, bright: 0.9 },
+    Soprano: { length: 14.2, larynx: 0, tension: 0.62, breath: 0.1, vib: 30, vibRate: 5.8, human: 0.3, tune: 1, bright: 0.85 },
+    Alto: { length: 15.6, larynx: 0, tension: 0.6, breath: 0.12, vib: 26, vibRate: 5.5, human: 0.35, tune: 0.7, bright: 0.85 },
+    Tenor: { length: 17.5, larynx: 0, tension: 0.6, breath: 0.12, vib: 22, vibRate: 5.4, human: 0.35, tune: 0.5, bright: 0.85 },
+    Bass: { length: 19.8, larynx: 0.35, tension: 0.5, breath: 0.1, vib: 18, vibRate: 5.0, human: 0.35, tune: 0.2, bright: 0.8 },
+    Giant: { length: 24, larynx: 1, tension: 0.4, breath: 0.2, vib: 10, vibRate: 3.5, human: 0.6, tune: 0, bright: 0.7 },
+    Breathy: { tension: 0.05, breath: 0.75, vib: 10, human: 0.5, bright: 0.9 },
+    Robot: { tension: 0.95, breath: 0, vib: 0, human: 0, artTime: 6, bright: 0.75 }
+  };
+  /* ---------------- parameters + controls ---------------- */
+  const Ly = LyricsFactory();
+  const ctls = {};                       // key -> list of {kind, el, ...} that show this parameter
+  const reg = (k, r) => { (ctls[k] = ctls[k] || []).push(r); };
+  const f2 = (v) => v.toFixed(2), pct = (v) => Math.round(v * 100) + '%';
+  const msf = (v) => (v >= 1000 ? (v / 1000).toFixed(2) + ' s' : Math.round(v) + ' ms');
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+  let uid = 0;
+  function slider(host, k, name, mn, mx, st, ends, f, log) {
+    const l = el('label', 'ctl'); const id = 'c_' + k + '_' + (uid++);
+    const nm = el('span', 'name', name), out = el('output'), inp = el('input'), en = el('span', 'ends');
+    inp.type = 'range'; inp.id = id;
+    const toPos = log ? (v) => Math.log(Math.max(v, mn) / mn) / Math.log(mx / mn) * 1000 : (v) => v;
+    const fromPos = log ? (p) => { const v = mn * Math.pow(mx / mn, p / 1000); return st >= 1 ? Math.round(v) : +v.toFixed(3); } : (p) => p;
+    if (log) { inp.min = 0; inp.max = 1000; inp.step = 1; } else { inp.min = mn; inp.max = mx; inp.step = st; }
+    inp.value = toPos(P[k]);
+    en.appendChild(el('i', '', ends[0])); en.appendChild(el('i', '', ends[1]));
+    l.append(nm, out, inp, en);
+    inp.addEventListener('input', () => setP(k, fromPos(parseFloat(inp.value))));
+    out.textContent = f(P[k]);
+    reg(k, { sync: (v) => { if (document.activeElement !== inp) inp.value = toPos(v); out.textContent = f(v); } });
+    host.appendChild(l); return l;
+  }
+  function seg(host, k, name, opts) {
+    const w = el('div', 'segwrap'); if (name) w.appendChild(el('span', 'name', name));
+    const row = el('div', 'seg'); row.setAttribute('role', 'group'); row.setAttribute('aria-label', name || k);
+    const bs = opts.map(([v, t]) => { const b = el('button', 'btn small', t); b.type = 'button'; b.addEventListener('click', () => setP(k, v)); row.appendChild(b); return [v, b]; });
+    w.appendChild(row); host.appendChild(w);
+    reg(k, { sync: (v) => bs.forEach(([x, b]) => b.setAttribute('aria-pressed', x === v ? 'true' : 'false')) });
+    return w;
+  }
+  function tog(host, k, text, btn) {
+    const b = btn || el('button', 'btn small', text); b.type = 'button';
+    b.addEventListener('click', () => setP(k, P[k] ? 0 : 1));
+    reg(k, { sync: (v) => b.setAttribute('aria-pressed', v ? 'true' : 'false') });
+    if (host) host.appendChild(b); return b;
+  }
+  function group(host, title, cls) { const g = el('section', 'grp' + (cls ? ' ' + cls : '')); g.appendChild(el('h3', '', title)); host.appendChild(g); return g; }
+
+  let respDirty = true, tractDirty = true, saveT = 0;
+  function setP(k, v) {
+    P[k] = v;
+    (ctls[k] || []).forEach((r) => r.sync(v));
+    post({ t: 'p', k, v });
+    respDirty = true; tractDirty = true;
+    if (k === 'phOn') { $('#phStrip').hidden = !v; if (v) sendPhrase(); }
+    if (k === 'l1sync' || k === 'l2sync') syncLfoRows();
+    scheduleSave();
+  }
+  function setMany(o) { for (const k in o) setP(k, o[k]); }
+
+  /* tabs */
+  const TABS = [['voice', 'Voice'], ['env', 'Envelopes'], ['lfo', 'LFOs'], ['matrix', 'Matrix'], ['phrase', 'Phrase'], ['play', 'Play & MIDI']];
+  const panels = {};
+  (function buildTabs() {
+    const bar = $('#tabs'), host = $('#panels');
+    TABS.forEach(([id, name], i) => {
+      const b = el('button', 'tab', name); b.type = 'button'; b.id = 'tab_' + id; b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', 'panel_' + id);
+      b.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+      b.addEventListener('click', () => showTab(id));
+      bar.appendChild(b);
+      const p = el('div', 'panel'); p.id = 'panel_' + id; p.setAttribute('role', 'tabpanel'); p.setAttribute('aria-labelledby', 'tab_' + id); p.hidden = i !== 0;
+      host.appendChild(p); panels[id] = p;
+    });
+  })();
+  let curTab = 'voice';
+  function showTab(id) {
+    curTab = id;
+    TABS.forEach(([t]) => { $('#tab_' + t).setAttribute('aria-selected', t === id ? 'true' : 'false'); panels[t].hidden = t !== id; });
+    try { localStorage.setItem('vts-tab', id); } catch (_) {}
+  }
+
+  /* Voice */
+  (function buildVoice() {
+    const p = el('div', 'pgrid'); panels.voice.appendChild(p);
+    let g = group(p, 'Mouth');
+    slider(g, 'x', 'Tongue position', 0, 1, 0.005, ['throat', 'teeth'], f2);
+    slider(g, 'y', 'Tongue constriction', 0, 1, 0.005, ['tight', 'open'], f2);
+    slider(g, 'w', 'Tongue width', 0, 1, 0.005, ['narrow', 'broad'], f2);
+    slider(g, 'tip', 'Tongue tip', 0, 1, 0.005, ['touching', 'away'], f2);
+    slider(g, 'lips', 'Lips', 0, 1, 0.005, ['rounded', 'open'], (v) => (0.35 * Math.pow(26, v)).toFixed(1) + ' cm²');
+    slider(g, 'phar', 'Throat width', 0, 1, 0.005, ['narrow', 'wide'], f2);
+    slider(g, 'vel', 'Nose (velum)', 0, 1, 0.005, ['closed', 'open'], f2);
+    slider(g, 'artTime', 'Mouth speed', 3, 400, 1, ['fast', 'slow'], msf, true);
+    g = group(p, 'Size');
+    slider(g, 'length', 'Tract length', 10, 24, 0.1, ['child', 'giant'], (v) => v.toFixed(1) + ' cm');
+    slider(g, 'larynx', 'Larynx height', -1, 1, 0.01, ['raised', 'lowered'], (v) => (v * 1.2 >= 0 ? '+' : '') + (v * 1.2).toFixed(1) + ' cm');
+    slider(g, 'tune', 'Soprano tuning', 0, 1, 0.01, ['off', 'jaw follows pitch'], f2);
+    const pr = $('#presets');
+    for (const name in PRESETS) { const b = el('button', 'btn small', name); b.type = 'button'; b.addEventListener('click', () => setMany(PRESETS[name])); pr.appendChild(b); }
+    g = group(p, 'Voice source');
+    slider(g, 'tension', 'Tension', 0, 1, 0.005, ['breathy', 'pressed'], f2);
+    slider(g, 'breath', 'Breath noise', 0, 1, 0.005, ['clean', 'airy'], f2);
+    slider(g, 'fric', 'Hiss at the tightest point', 0, 1, 0.005, ['none', 'sibilant'], f2);
+    slider(g, 'vib', 'Vibrato depth', 0, 80, 0.5, ['0', '80 ct'], (v) => v.toFixed(0) + ' ct');
+    slider(g, 'vibRate', 'Vibrato rate', 2, 9, 0.05, ['slow', 'fast'], (v) => v.toFixed(1) + ' Hz');
+    slider(g, 'vibDelay', 'Vibrato delay', 0, 1500, 10, ['0', '1.5 s'], msf);
+    slider(g, 'human', 'Humanize', 0, 1, 0.01, ['steady', 'loose'], f2);
+    g = group(p, 'Output');
+    slider(g, 'master', 'Level', 0, 1, 0.005, ['quiet', 'loud'], (v) => (20 * Math.log10(Math.max(v * v, 1e-4))).toFixed(1) + ' dB');
+    slider(g, 'room', 'Room', 0, 1, 0.005, ['dry', 'wet'], f2);
+    slider(g, 'bright', 'Brightness', 0, 1, 0.005, ['dark', 'open'], f2);
+    slider(g, 'spread', 'Stereo spread', 0, 1, 0.01, ['centre', 'wide'], f2);
+    slider(g, 'morph', 'Morph to target', 0, 1, 0.005, ['mouth shape', 'target vowel'], f2);
+  })();
+
+  /* Envelopes */
+  const envCanv = [];
+  (function buildEnvs() {
+    const p = el('div', 'pgrid three'); panels.env.appendChild(p);
+    const defs = [['Env 1 · volume', 'attack', 'decay', 'sustain', 'release', null], ['Env 2', 'e2a', 'e2d', 'e2s', 'e2r', 'e2loop'], ['Env 3', 'e3a', 'e3d', 'e3s', 'e3r', 'e3loop']];
+    defs.forEach(([title, a, d, s, r, loop], i) => {
+      const g = group(p, title);
+      const c = el('canvas', 'mini'); c.setAttribute('aria-label', title + ' shape'); g.appendChild(c); envCanv.push({ c, a, d, s, r, loop, i });
+      slider(g, a, 'Attack', 1, 5000, 1, ['1 ms', '5 s'], msf, true);
+      slider(g, d, 'Decay', 5, 8000, 1, ['5 ms', '8 s'], msf, true);
+      slider(g, s, 'Sustain', 0, 1, 0.005, ['0', '1'], pct);
+      slider(g, r, 'Release', 5, 8000, 1, ['5 ms', '8 s'], msf, true);
+      if (loop) { const row = el('div', 'row'); g.appendChild(row); tog(row, loop, 'Loop attack + decay while held'); }
+      else g.appendChild(el('p', 'hint2', 'Shapes loudness of every note. Env 2 and 3 are free: route them in the Matrix tab.'));
+    });
+  })();
+
+  /* LFOs */
+  const lfoCanv = [], lfoRows = [];
+  const SHAPES = [[0, 'Sine'], [1, 'Triangle'], [2, 'Saw'], [3, 'Square'], [4, 'S&H'], [5, 'Drift']];
+  (function buildLfos() {
+    const p = el('div', 'pgrid'); panels.lfo.appendChild(p);
+    ['l1', 'l2'].forEach((pre, i) => {
+      const g = group(p, 'LFO ' + (i + 1));
+      const c = el('canvas', 'mini'); c.setAttribute('aria-label', 'LFO ' + (i + 1) + ' shape'); g.appendChild(c); lfoCanv.push({ c, pre, i });
+      seg(g, pre + 'shape', 'Shape', SHAPES);
+      const row = el('div', 'row'); g.appendChild(row);
+      tog(row, pre + 'sync', 'Sync to tempo'); tog(row, pre + 'retrig', 'Restart on each note');
+      const hz = slider(g, pre + 'rate', 'Rate', 0.05, 30, 0.01, ['0.05 Hz', '30 Hz'], (v) => (v < 1 ? v.toFixed(2) : v.toFixed(1)) + ' Hz', true);
+      const dv = seg(g, pre + 'div', 'Rate (synced)', E.LFO_DIV_NAMES.map((n, j) => [j, n]));
+      slider(g, pre + 'amt', 'Amount', 0, 1, 0.005, ['0', '100%'], pct);
+      lfoRows.push({ pre, hz, dv });
+    });
+    const g = group(p, 'Tempo');
+    slider(g, 'bpm', 'Tempo for synced LFOs', 40, 240, 1, ['40', '240 bpm'], (v) => v.toFixed(0) + ' bpm');
+    g.appendChild(el('p', 'hint2', 'With "Restart on each note" off, every note follows one shared LFO. On, each note gets its own wobble that starts at the note.'));
+  })();
+  function syncLfoRows() { lfoRows.forEach((r) => { const s = !!P[r.pre + 'sync']; r.hz.hidden = s; r.dv.hidden = !s; }); }
+
+  /* Matrix */
+  const SRC_NAMES = { env2: 'Env 2', env3: 'Env 3', lfo1: 'LFO 1', lfo2: 'LFO 2', vel: 'Velocity', note: 'Note', mw: 'Mod wheel', press: 'Pressure', slide: 'Slide', bend: 'Bend', rand: 'Random' };
+  const DST_NAMES = { pitch: 'Pitch', amp: 'Volume', pan: 'Pan', x: 'Tongue position', y: 'Constriction', w: 'Tongue width', lips: 'Lips', phar: 'Throat width', vel: 'Nose', tip: 'Tongue tip', length: 'Tract length', larynx: 'Larynx height', tension: 'Tension', breath: 'Breath', fric: 'Hiss', vib: 'Vibrato depth', morph: 'Morph', l1rate: 'LFO 1 rate', l1amt: 'LFO 1 amount', l2rate: 'LFO 2 rate', l2amt: 'LFO 2 amount' };
+  const DST_GROUPS = [['Pitch and level', ['pitch', 'amp', 'pan']], ['Mouth', ['x', 'y', 'w', 'tip', 'lips', 'phar', 'vel', 'morph']], ['Size', ['length', 'larynx']], ['Source', ['tension', 'breath', 'fric', 'vib']], ['Modulators', ['l1rate', 'l1amt', 'l2rate', 'l2amt']]];
+  const mods = new Float32Array(E.NS * E.ND);
+  const defaultMods = () => { mods.fill(0); for (const [s, d, v] of E.DEFAULT_MODS) mods[E.SI[s] * E.ND + E.DI[d]] = v; };
+  defaultMods();
+  const cells = [], srcMeters = [], rowHeads = {};
+  function dstText(d, v) {
+    const sc = E.DST_SCALE[d] * v;
+    if (d === 'pitch') return (sc >= 0 ? '+' : '') + sc.toFixed(1) + ' st';
+    if (d === 'length') return (sc >= 0 ? '+' : '') + sc.toFixed(1) + ' cm';
+    if (d === 'vib') return (sc >= 0 ? '+' : '') + sc.toFixed(0) + ' ct';
+    if (d === 'l1rate' || d === 'l2rate') return '×' + Math.pow(2, sc).toFixed(2);
+    return (v >= 0 ? '+' : '') + Math.round(v * 100) + '%';
+  }
+  function paintCell(i) {
+    const c = cells[i]; if (!c) return; const v = mods[i];
+    c.bar.style.width = Math.abs(v) * 50 + '%';
+    c.bar.style.left = v >= 0 ? '50%' : (50 - Math.abs(v) * 50) + '%';
+    c.bar.classList.toggle('neg', v < 0);
+    c.val.textContent = v ? (v > 0 ? '+' : '') + Math.round(v * 100) : '';
+    c.b.setAttribute('aria-label', SRC_NAMES[E.MOD_SRC[c.s]] + ' to ' + DST_NAMES[E.MOD_DST[c.d]] + ': ' + (v ? dstText(E.MOD_DST[c.d], v) : 'off'));
+    c.b.title = SRC_NAMES[E.MOD_SRC[c.s]] + ' → ' + DST_NAMES[E.MOD_DST[c.d]] + (v ? ' · ' + dstText(E.MOD_DST[c.d], v) : '');
+    c.b.classList.toggle('on', v !== 0);
+    const d = c.d; let any = false; for (let s = 0; s < E.NS; s++) if (mods[s * E.ND + d]) any = true;
+    rowHeads[d].classList.toggle('on', any);
+  }
+  function setMod(i, v) {
+    v = Math.round(clamp(v, -1, 1) * 100) / 100;
+    if (mods[i] === v) return;
+    mods[i] = v; paintCell(i);
+    post({ t: 'mod', s: (i / E.ND) | 0, d: i % E.ND, v });
+    scheduleSave();
+  }
+  (function buildMatrix() {
+    const top = el('div', 'mxbar'); panels.matrix.appendChild(top);
+    top.appendChild(el('p', 'hint2', 'Drag a cell up or down to set how much a source moves a destination. Double-click a cell to clear it. Arrow keys work too.'));
+    const bclr = el('button', 'btn small', 'Clear all'); bclr.type = 'button'; bclr.addEventListener('click', () => { for (let i = 0; i < mods.length; i++) setMod(i, 0); });
+    const bdef = el('button', 'btn small', 'Default routing'); bdef.type = 'button'; bdef.addEventListener('click', () => { const keep = new Float32Array(mods); defaultMods(); const nv = new Float32Array(mods); mods.set(keep); for (let i = 0; i < mods.length; i++) setMod(i, nv[i]); });
+    const r = el('div', 'row'); r.append(bclr, bdef); top.appendChild(r);
+    const wrap = el('div', 'mxwrap'); panels.matrix.appendChild(wrap);
+    const t = el('table', 'mx'); wrap.appendChild(t);
+    const thead = el('thead'), hr = el('tr'); thead.appendChild(hr); t.appendChild(thead);
+    hr.appendChild(el('th', 'corner', ''));
+    E.MOD_SRC.forEach((s) => { const th = el('th', 'src'); th.scope = 'col'; th.appendChild(el('span', 'sn', SRC_NAMES[s])); const m = el('span', 'mm'); const i = el('i'); m.appendChild(i); th.appendChild(m); srcMeters.push(i); hr.appendChild(th); });
+    const tb = el('tbody'); t.appendChild(tb);
+    DST_GROUPS.forEach(([gname, list]) => {
+      const gr = el('tr', 'gh'); const gth = el('th', '', gname); gth.colSpan = E.NS + 1; gth.scope = 'colgroup'; gr.appendChild(gth); tb.appendChild(gr);
+      list.forEach((dk) => {
+        const d = E.DI[dk], tr = el('tr'); const th = el('th', 'dst', DST_NAMES[dk]); th.scope = 'row'; rowHeads[d] = th; tr.appendChild(th);
+        for (let s = 0; s < E.NS; s++) {
+          const i = s * E.ND + d, td = el('td'), b = el('button', 'cell'); b.type = 'button';
+          const bar = el('span', 'bar'), val = el('span', 'val'); b.append(bar, val); td.appendChild(b); tr.appendChild(td);
+          cells[i] = { b, bar, val, s, d };
+          let drag = null;
+          b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.focus(); try { b.setPointerCapture(e.pointerId); } catch (_) {} drag = { y: e.clientY, x: e.clientX, v: mods[i], id: e.pointerId }; });
+          b.addEventListener('pointermove', (e) => { if (!drag || e.pointerId !== drag.id) return; setMod(i, drag.v + ((drag.y - e.clientY) + (e.clientX - drag.x) * 0.5) / 140); });
+          const end = (e) => { if (drag && e.pointerId === drag.id) drag = null; };
+          b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
+          b.addEventListener('dblclick', () => setMod(i, 0));
+          b.addEventListener('keydown', (e) => {
+            const k = e.key; let used = true;
+            if (k === 'ArrowUp' || k === 'ArrowRight') setMod(i, mods[i] + (e.shiftKey ? 0.01 : 0.05));
+            else if (k === 'ArrowDown' || k === 'ArrowLeft') setMod(i, mods[i] - (e.shiftKey ? 0.01 : 0.05));
+            else if (k === 'Delete' || k === 'Backspace' || k === '0') setMod(i, 0);
+            else used = false;
+            if (used) { e.preventDefault(); e.stopPropagation(); }
+          });
+        }
+        tb.appendChild(tr);
+      });
+    });
+    for (let i = 0; i < mods.length; i++) paintCell(i);
+  })();
+
+  /* Phrase */
+  const DEFAULT_TEXT = 'oh hello moon, sing me a strange little song';
+  let phraseText = DEFAULT_TEXT, parsed = { words: [], flat: [] }, sylEls = [], stripEls = [];
+  function sendPhrase() { post({ t: 'phrase', s: parsed.flat.map((s) => ({ on: s.on, v: s.v, off: s.off })), text: phraseText }); }
+  function setPhraseText(txt) {
+    phraseText = txt; parsed = Ly.parse(txt);
+    const host = $('#words'); host.textContent = ''; sylEls = [];
+    const strip = $('#phStrip'); strip.textContent = ''; stripEls = [];
+    let n = 0;
+    parsed.words.forEach((w) => {
+      const box = el('div', 'word'); const top = el('div', 'wt'); top.appendChild(el('span', 'wtext', w.text)); top.appendChild(el('span', 'wsrc ' + w.src, w.src)); box.appendChild(top);
+      const row = el('div', 'syls');
+      const sw = el('span', 'sw');
+      w.syl.forEach((s) => { const c = el('span', 'syl', s.label); c.title = s.on.concat([s.v], s.off).join(' '); row.appendChild(c); sylEls.push(c); const sc = el('span', 's', s.label); sw.appendChild(sc); stripEls.push(sc); n++; });
+      box.appendChild(row); host.appendChild(box); strip.appendChild(sw);
+    });
+    $('#phCount').textContent = n + (n === 1 ? ' syllable' : ' syllables');
+    sendPhrase(); scheduleSave();
+  }
+  (function buildPhrase() {
+    const p = el('div', 'pgrid phgrid'); panels.phrase.appendChild(p);
+    const g = group(p, 'Words to sing', 'wide');
+    const ta = el('textarea'); ta.id = 'phraseText'; ta.rows = 3; ta.spellcheck = false; ta.value = phraseText; ta.setAttribute('aria-label', 'Words to sing');
+    g.appendChild(ta);
+    const row = el('div', 'row'); g.appendChild(row);
+    tog(row, 'phOn', 'Sing the words');
+    const rs = el('button', 'btn small', 'Back to the first syllable'); rs.type = 'button'; rs.addEventListener('click', () => post({ t: 'phReset' })); row.appendChild(rs);
+    row.appendChild(el('span', 'chip', '')).id = 'phCount';
+    const words = el('div', 'words'); words.id = 'words'; g.appendChild(words);
+    g.appendChild(el('p', 'hint2', 'Each new note sings the next syllable; hold a note to keep going through the words. Words marked "rules" are guessed from spelling. Fix one by respelling it in square brackets, like [wurld], or write sounds directly in braces, like {HH EH L OW}.'));
+    let tmr = 0;
+    ta.addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(() => setPhraseText(ta.value), 250); });
+    const h = group(p, 'Timing');
+    const r2 = el('div', 'row'); h.appendChild(r2); tog(r2, 'phAuto', 'Keep singing while held'); tog(r2, 'phLoop', 'Loop the words');
+    slider(h, 'phWait', 'Hold before moving on', 100, 3000, 1, ['100 ms', '3 s'], msf, true);
+    slider(h, 'phLen', 'Syllable length when moving on', 120, 2000, 1, ['fast', 'slow'], msf, true);
+    slider(h, 'phReset', 'Start over after silence', 0.3, 15, 0.1, ['0.3 s', '15 s'], (v) => v.toFixed(1) + ' s', true);
+    slider(h, 'phCons', 'Consonants', 0, 1, 0.01, ['vowels only', 'full'], pct);
+  })();
+
+  /* Play & MIDI */
+  (function buildPlay() {
+    const p = el('div', 'pgrid'); panels.play.appendChild(p);
+    let g = group(p, 'Mono and glide');
+    let row = el('div', 'row'); g.appendChild(row);
+    tog(row, 'mono', 'Mono'); tog(row, 'legRetrig', 'Legato restarts Env 2 and 3');
+    seg(g, 'prio', 'Note priority', [[0, 'Last'], [1, 'Lowest'], [2, 'Highest']]);
+    seg(g, 'glideMode', 'Glide', [[0, 'Legato only'], [1, 'Always']]);
+    slider(g, 'glide', 'Glide time', 0, 1500, 1, ['0', '1.5 s'], msf);
+    g = group(p, 'Polyphony and bend');
+    slider(g, 'voices', 'Polyphony', 1, 10, 1, ['1', '10'], (v) => v.toFixed(0));
+    slider(g, 'bend', 'Pitch bend range', 0, 24, 1, ['0', '24 st'], (v) => v.toFixed(0) + ' st');
+    g = group(p, 'MPE');
+    row = el('div', 'row'); g.appendChild(row); tog(row, 'mpe', 'MPE controller');
+    slider(g, 'mpeBend', 'Per-note bend range', 1, 96, 1, ['1', '96 st'], (v) => v.toFixed(0) + ' st');
+    g.appendChild(el('p', 'hint2', 'With MPE on, each finger\'s pressure, slide (CC 74) and bend reach only its own note. Route Pressure and Slide to any part of the mouth in the Matrix tab. Mod wheel, sustain and channel 1 messages stay global.'));
+    g = group(p, 'Patch');
+    row = el('div', 'row'); g.appendChild(row);
+    const ib = el('button', 'btn small', 'Reset everything'); ib.type = 'button'; row.appendChild(ib);
+    const ok = el('button', 'btn small', 'Yes, reset'); ok.type = 'button'; ok.hidden = true; row.appendChild(ok);
+    ib.addEventListener('click', () => { ok.hidden = !ok.hidden; });
+    ok.addEventListener('click', () => { ok.hidden = true; allOff(); setMany(Object.assign({}, D)); defaultMods(); post({ t: 'mods', a: Array.from(mods) }); for (let i = 0; i < mods.length; i++) paintCell(i); applyVowel('ɑ'); setTarget('i'); $('#phraseText').value = DEFAULT_TEXT; setPhraseText(DEFAULT_TEXT); });
+    g.appendChild(el('p', 'hint2', 'Your settings, matrix and words are kept in this browser.'));
+  })();
+
+  /* save / restore */
+  function scheduleSave() { if (JUCE) return; clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem('vts-v2', JSON.stringify({ P, mods: Array.from(mods), text: phraseText })); } catch (_) {} }, 400); }
+  function restore() {
+    if (JUCE) return;
+    let s = null; try { s = JSON.parse(localStorage.getItem('vts-v2') || 'null'); } catch (_) {}
+    if (s && s.P) for (const k in D) if (typeof s.P[k] === 'number') P[k] = s.P[k];
+    if (s && Array.isArray(s.mods) && s.mods.length === mods.length) mods.set(s.mods.map((v) => clamp(+v || 0, -1, 1)));
+    if (s && typeof s.text === 'string') { phraseText = s.text; $('#phraseText').value = s.text; }
+    try { const t = localStorage.getItem('vts-tab'); if (t && panels[t]) showTab(t); } catch (_) {}
+  }
+
+  /* ---------------- vowel helpers ---------------- */
+  function applyVowel(name) { const a = E.vowelArt(name); setMany({ x: a.x, y: a.y, w: a.w, lips: a.lips, phar: a.phar }); }
+  function setTarget(name) {
+    const a = E.vowelArt(name); setMany({ bx: a.x, by: a.y, bw: a.w, blips: a.lips, bphar: a.phar, bvel: 0 });
+    document.querySelectorAll('#vchips .btn').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v === name ? 'true' : 'false'));
+    targetName = name;
+  }
+  let targetName = 'i';
+  function markTarget(name) { targetName = name; document.querySelectorAll('#vchips .btn').forEach((b) => b.setAttribute('aria-pressed', b.dataset.v === name ? 'true' : 'false')); }
+  (function buildChips() {
+    const host = $('#vchips');
+    for (const v of E.VOWEL_ORDER) {
+      const b = document.createElement('button'); b.className = 'btn small'; b.type = 'button'; b.textContent = v; b.dataset.v = v; b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', () => setTarget(v));
+      host.appendChild(b);
+    }
+  })();
+  const artEff = () => { const m = P.morph; return { x: lerp(P.x, P.bx, m), y: lerp(P.y, P.by, m), w: lerp(P.w, P.bw, m), lips: lerp(P.lips, P.blips, m), phar: lerp(P.phar, P.bphar, m), vel: lerp(P.vel, P.bvel, m), tip: P.tip, lc: 0 }; };
+  const effLen = () => P.length + P.larynx * 1.2;
+  const liveOn = () => tel && tel[0] >= 0 && mode !== 'off' && !drag;
+  const viewArt = () => liveOn() ? { x: tel[0], y: tel[1], w: tel[2], lips: tel[3], phar: tel[4], vel: tel[5], tip: tel[6], lc: tel[7] } : artEff();
+  const viewLen = () => liveOn() ? tel[8] : effLen();
+
+  /* ---------------- notes ---------------- */
+  const down = new Set();
+  let base = 48;
+  function noteOn(n, vl, ch) { if (!ready) startAudio(); down.add(n); post({ t: 'on', n, v: vl, ch: ch | 0 }); paintKeys(); }
+  function noteOff(n, ch) { down.delete(n); post({ t: 'off', n, ch: ch | 0 }); paintKeys(); }
+
+  const kb = $('#kb'), keyEls = [];
+  (function buildKeys() {
+    const whites = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24];
+    const blackAfter = { 0: 1, 2: 3, 5: 6, 7: 8, 9: 10, 12: 13, 14: 15, 17: 18, 19: 20, 21: 22 };
+    whites.forEach((o) => { const k = document.createElement('div'); k.className = 'key white'; k.dataset.o = o; k.tabIndex = -1; kb.appendChild(k); keyEls.push(k); });
+    whites.forEach((o, i) => {
+      if (blackAfter[o] === undefined) return;
+      const k = document.createElement('div'); k.className = 'key black'; k.dataset.o = blackAfter[o];
+      k.style.left = 'calc(' + ((i + 1) * 100 / whites.length) + '% - 2.8%)';
+      kb.appendChild(k); keyEls.push(k);
+    });
+  })();
+  function paintKeys() {
+    for (const k of keyEls) {
+      const n = base + parseInt(k.dataset.o, 10);
+      k.classList.toggle('down', down.has(n));
+      if (k.classList.contains('white')) { const o = parseInt(k.dataset.o, 10); k.textContent = (o % 12 === 0) ? noteName(n) : ''; }
+    }
+    $('#rangeChip').textContent = noteName(base) + ' – ' + noteName(base + 24);
+  }
+  paintKeys();
+  const ptr = new Map();   // pointerId -> sounding note
+  function keyAt(x, y) { const el = document.elementFromPoint(x, y); return el && el.closest ? el.closest('.key') : null; }
+  function velAt(k, y) { const r = k.getBoundingClientRect(); return clamp(0.4 + 0.6 * ((y - r.top) / r.height), 0.3, 1); }
+  kb.addEventListener('pointerdown', (e) => {
+    const k = keyAt(e.clientX, e.clientY); if (!k) return;
+    e.preventDefault(); try { kb.setPointerCapture(e.pointerId); } catch (_) {}
+    const n = base + parseInt(k.dataset.o, 10); ptr.set(e.pointerId, n); noteOn(n, velAt(k, e.clientY));
+  });
+  kb.addEventListener('pointermove', (e) => {
+    if (!ptr.has(e.pointerId)) return;
+    const k = keyAt(e.clientX, e.clientY); if (!k) return;
+    const n = base + parseInt(k.dataset.o, 10), old = ptr.get(e.pointerId);
+    if (n !== old) { ptr.set(e.pointerId, n); noteOn(n, velAt(k, e.clientY)); noteOff(old); }
+  });
+  const kbUp = (e) => { if (!ptr.has(e.pointerId)) return; noteOff(ptr.get(e.pointerId)); ptr.delete(e.pointerId); };
+  kb.addEventListener('pointerup', kbUp); kb.addEventListener('pointercancel', kbUp); kb.addEventListener('lostpointercapture', kbUp);
+
+  const KEYMAP = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ';': 16 };
+  const keyDown = new Map();
+  function shiftOct(d) { allOff(); base = clamp(base + d * 12, 24, 84); paintKeys(); }
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target; if (t && (t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && t.type !== 'range'))) return;
+    if (t && t.classList && t.classList.contains('cell') && e.key.indexOf('Arrow') === 0) return;
+    const k = e.key.toLowerCase();
+    if (k === 'z') { if (!e.repeat) shiftOct(-1); return; }
+    if (k === 'x') { if (!e.repeat) shiftOct(1); return; }
+    if (k === 'escape') { allOff(); return; }
+    if (!(k in KEYMAP) || e.repeat || keyDown.has(k)) return;
+    const n = base + KEYMAP[k]; keyDown.set(k, n); noteOn(n, 0.75);
+  });
+  window.addEventListener('keyup', (e) => { const k = e.key.toLowerCase(); if (keyDown.has(k)) { noteOff(keyDown.get(k)); keyDown.delete(k); } });
+  window.addEventListener('blur', () => allOff());
+  function allOff() { post({ t: 'panic' }); down.clear(); ptr.clear(); keyDown.clear(); paintKeys(); stopDemo(); }
+  $('#octDn').addEventListener('click', () => shiftOct(-1));
+  $('#octUp').addEventListener('click', () => shiftOct(1));
+  $('#panicBtn').addEventListener('click', allOff);
+  tog(null, 'mono', '', $('#monoBtn'));
+  tog(null, 'phOn', '', $('#phBtn'));
+  $('#startBtn').addEventListener('click', startAudio);
+
+  /* ---------------- MIDI ---------------- */
+  (function initMidi() {
+    const chip = $('#chipMidi');
+    if (JUCE) { setChip(chip, 'midi', 'from host'); setChip($('#chipAudio'), 'audio', 'plugin'); $('#startBtn').hidden = true; return; }
+    if (!navigator.requestMIDIAccess) { setChip(chip, 'midi', 'not in this browser'); return; }
+    let pending;
+    try { pending = navigator.requestMIDIAccess(); } catch (err) { setChip(chip, 'midi', 'blocked here'); return; }
+    pending.then((acc) => {
+      const hook = () => {
+        const names = [];
+        acc.inputs.forEach((inp) => { names.push(inp.name || 'input'); inp.onmidimessage = onMidi; });
+        setChip(chip, 'midi', names.length ? names[0] + (names.length > 1 ? ' +' + (names.length - 1) : '') : 'no input');
+      };
+      acc.onstatechange = hook; hook();
+    }, () => setChip(chip, 'midi', 'blocked here'));
+  })();
+  function onMidi(m) {
+    const d = m.data, st = d[0] & 0xf0, ch = d[0] & 15;
+    if (st === 0x90 && d[2] > 0) noteOn(d[1], d[2] / 127, ch);
+    else if (st === 0x80 || (st === 0x90 && d[2] === 0)) noteOff(d[1], ch);
+    else if (st === 0xe0) { const v = ((d[2] << 7 | d[1]) - 8192) / 8192; if (!(P.mpe && ch > 0)) bendNow = v; post({ t: 'bend', v, ch }); }
+    else if (st === 0xd0) post({ t: 'press', v: d[1] / 127, ch });
+    else if (st === 0xa0) post({ t: 'pat', n: d[1], v: d[2] / 127 });
+    else if (st === 0xb0) {
+      if (d[1] === 1) post({ t: 'mw', v: d[2] / 127 });
+      else if (d[1] === 74) post({ t: 'slide', v: d[2] / 127, ch });
+      else if (d[1] === 64) post({ t: 'sus', v: d[2] >= 64 ? 1 : 0 });
+      else if (d[1] === 7) setP('master', Math.sqrt(d[2] / 127) * 0.9);
+      else if (d[1] === 123 || d[1] === 120) allOff();
+    }
+  }
+
+  /* ---------------- demo: sing the words to a short tune, then hold the last note ---------------- */
+  let demoTimers = [], demoNote = -1;
+  const TUNE = [[57, 420], [60, 420], [64, 420], [62, 420], [60, 420], [62, 420], [64, 420], [57, 2800]];
+  function stopDemo() {
+    demoTimers.forEach(clearTimeout); demoTimers = [];
+    if (demoNote >= 0) { post({ t: 'off', n: demoNote, ch: 0 }); down.delete(demoNote); paintKeys(); demoNote = -1; }
+    $('#demoBtn').textContent = 'Sing the words';
+  }
+  $('#demoBtn').addEventListener('click', async () => {
+    if (demoTimers.length) { stopDemo(); return; }
+    await startAudio();
+    if (!parsed.flat.length) { $('#phraseText').value = DEFAULT_TEXT; setPhraseText(DEFAULT_TEXT); }
+    setP('phOn', 1); post({ t: 'phReset' });
+    $('#demoBtn').textContent = 'Stop';
+    let t = 150;
+    TUNE.forEach(([n, dur]) => {
+      demoTimers.push(setTimeout(() => {
+        if (demoNote >= 0) { post({ t: 'off', n: demoNote, ch: 0 }); down.delete(demoNote); }
+        demoNote = n; down.add(n); post({ t: 'on', n, v: 0.8, ch: 0 }); paintKeys();
+      }, t));
+      t += dur;
+    });
+    demoTimers.push(setTimeout(stopDemo, t));
+  });
+
+  /* ---------------- drawing ---------------- */
+  const theme = {};
+  function readTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    for (const k of ['bg', 'panel', 'panel2', 'ink', 'muted', 'line', 'air', 'tissue']) theme[k] = cs.getPropertyValue('--' + k).trim() || '#888888';
+  }
+  function rgba(hex, a) {
+    let h = hex.replace('#', ''); if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+    const n = parseInt(h, 16); if (isNaN(n)) return hex;
+    return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+  function fit(c) {
+    const r = c.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const w = Math.max(10, Math.round(r.width)), h = Math.max(10, Math.round(r.height));
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); tractDirty = true; }
+    const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { g, w, h };
+  }
+
+  /* response of the tract alone, plus formants */
+  let resp = null, formants = [], respAt = 0;
+  function updateResp() {
+    resp = E.tractResponse(viewArt(), viewLen(), sampleRateNow, { len: 2048, nfft: 4096 });
+    formants = E.findFormants(resp, 4, 120, 5200);
+    respDirty = false; respAt = performance.now();
+  }
+
+  /* --- tract view --- */
+  const cT = $('#tract'), cP = $('#pad'), cS = $('#spec');
+  let G = null;     // geometry of the last tract draw, for hit testing
+  const areaBuf = new Float64Array(64);
+  const wave = new Float32Array(1024);
+  function drawTract() {
+    const { g, w: W, h: H } = fit(cT);
+    const a = viewArt(), N = 48;
+    const info = E.buildAreas(a, N, areaBuf);
+    g.clearRect(0, 0, W, H);
+    const xs = W * 0.085 - P.larynx * W * 0.03, x1 = W * 0.9, span = x1 - xs;
+    const y0 = H * 0.46, kk = H * 0.118;
+    const area = (t) => { const p = clamp(t * N - 0.5, 0, N - 1), i = Math.floor(p), f = p - i; return lerp(areaBuf[i], areaBuf[Math.min(N - 1, i + 1)], f); };
+    const yU = (t) => y0 - H * 0.03 * Math.sin(Math.PI * clamp((t - 0.3) / 0.7, 0, 1));
+    const yL = (t) => yU(t) + kk * Math.sqrt(area(t));
+    const X = (t) => xs + span * t;
+    const STEPS = 90;
+    // upper tissue (palate, neck behind the folds)
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(0, yU(0)); g.lineTo(xs, yU(0));
+    for (let i = 0; i <= STEPS; i++) { const t = i / STEPS; g.lineTo(X(t), yU(t)); }
+    g.lineTo(x1, 0); g.closePath();
+    g.fillStyle = rgba(theme.tissue, 0.2); g.fill();
+    // lower tissue (tongue, jaw)
+    g.beginPath(); g.moveTo(0, H); g.lineTo(0, yL(0)); g.lineTo(xs, yL(0));
+    for (let i = 0; i <= STEPS; i++) { const t = i / STEPS; g.lineTo(X(t), yL(t)); }
+    g.lineTo(x1, H); g.closePath();
+    const gr = g.createLinearGradient(0, y0, 0, H); gr.addColorStop(0, rgba(theme.tissue, 0.46)); gr.addColorStop(1, rgba(theme.tissue, 0.16));
+    g.fillStyle = gr; g.fill();
+    // closed end behind the folds
+    g.fillStyle = rgba(theme.tissue, 0.3); g.fillRect(0, yU(0) - 1, xs, yL(0) - yU(0) + 2);
+    // airway
+    g.beginPath();
+    for (let i = 0; i <= STEPS; i++) { const t = i / STEPS; g.lineTo(X(t), yU(t)); }
+    for (let i = STEPS; i >= 0; i--) { const t = i / STEPS; g.lineTo(X(t), yL(t)); }
+    g.closePath();
+    const ga = g.createLinearGradient(0, y0 - H * 0.05, 0, y0 + H * 0.34); ga.addColorStop(0, rgba(theme.air, 0.4)); ga.addColorStop(1, rgba(theme.air, 0.16));
+    g.fillStyle = ga; g.fill();
+    // nasal passage above the palate
+    const velOpen = clamp(a.vel, 0, 1), tv0 = 0.38, tv1 = 0.43;
+    const nTop = H * 0.12, nBot = (t) => yU(t) - H * 0.07;
+    g.beginPath(); g.moveTo(X(0.34), nBot(0.34));
+    for (let i = 0; i <= 40; i++) { const t = 0.34 + 0.66 * i / 40; g.lineTo(X(t), nBot(t)); }
+    g.lineTo(x1, nTop + H * 0.03); g.lineTo(X(0.34), nTop + H * 0.03); g.closePath();
+    g.fillStyle = rgba(theme.air, 0.1 + 0.3 * velOpen); g.fill();
+    g.strokeStyle = rgba(theme.air, 0.5); g.lineWidth = 1; g.stroke();
+    // velum port
+    const portH = H * 0.07 * velOpen;
+    g.fillStyle = rgba(theme.air, 0.14 + 0.3 * velOpen);
+    g.fillRect(X(tv0), yU(tv0) - H * 0.07, X(tv1) - X(tv0), H * 0.07 + 1);
+    g.fillStyle = theme.panel2; g.fillRect(X(tv0) - 1, yU(tv0) - H * 0.07 + portH, X(tv1) - X(tv0) + 2, H * 0.07 - portH + 1);
+    g.fillStyle = rgba(theme.tissue, 0.5); g.fillRect(X(tv0) - 1, yU(tv0) - H * 0.07 + portH, X(tv1) - X(tv0) + 2, H * 0.07 - portH + 1);
+    // walls
+    g.lineWidth = 2.5; g.lineJoin = 'round'; g.lineCap = 'round';
+    g.strokeStyle = rgba(theme.tissue, 1);
+    g.beginPath(); for (let i = 0; i <= STEPS; i++) { const t = i / STEPS; (i ? g.lineTo : g.moveTo).call(g, X(t), yL(t)); } g.stroke();
+    g.lineWidth = 2; g.strokeStyle = rgba(theme.tissue, 0.7);
+    g.beginPath(); for (let i = 0; i <= STEPS; i++) { const t = i / STEPS; (i ? g.lineTo : g.moveTo).call(g, X(t), yU(t)); } g.stroke();
+    // glottis: folds close with tension
+    const gap = H * (0.008 + 0.05 * (1 - P.tension));
+    g.fillStyle = rgba(theme.tissue, 0.95);
+    const yg = (yU(0) + yL(0)) / 2;
+    g.beginPath(); g.ellipse(xs + 1, yg - gap - H * 0.022, W * 0.013, H * 0.026, 0, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(xs + 1, yg + gap + H * 0.022, W * 0.013, H * 0.026, 0, 0, 7); g.fill();
+    // lips
+    g.fillStyle = rgba(theme.tissue, 0.9);
+    g.beginPath(); g.ellipse(x1 + 2, yU(1) - H * 0.006, W * 0.013, H * 0.034, 0, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(x1 + 2, yL(1) + H * 0.006, W * 0.015, H * 0.038, 0, 0, 7); g.fill();
+    // ruler
+    const cm = viewLen(), pxcm = span / cm;
+    g.strokeStyle = rgba(theme.muted, 0.6); g.fillStyle = theme.muted; g.lineWidth = 1;
+    g.font = '10px JetBrains Mono, ui-monospace, monospace'; g.textAlign = 'center';
+    const ry = H - 12;
+    g.beginPath(); g.moveTo(xs, ry); g.lineTo(x1, ry); g.stroke();
+    for (let c = 0; c <= cm + 0.01; c += 1) { const x = xs + c * pxcm; g.beginPath(); g.moveTo(x, ry); g.lineTo(x, ry - (c % 5 === 0 ? 7 : 3)); g.stroke(); if (c % 5 === 0 && c > 0) g.fillText(c + '', x, ry - 10); }
+    g.textAlign = 'right'; g.fillText('cm', xs - 6, ry + 3);
+    // landmark labels
+    g.textAlign = 'left'; g.fillStyle = rgba(theme.muted, 0.9);
+    g.fillText('GLOTTIS', 8, 14); g.fillText('PHARYNX', X(0.2), 14); g.fillText('PALATE', X(0.62), 14); g.fillText('NASAL PASSAGE', X(0.5), nTop + H * 0.03 + 12);
+    g.textAlign = 'right'; g.fillText('LIPS', W - 8, 14);
+    // waveform in the airway
+    if (JUCE ? !!pluginWave : (analyser && mode !== 'off')) {
+      if (JUCE) { for (let i = 0; i < 640; i++) wave[i] = pluginWave[i] || 0; } else analyser.getFloatTimeDomainData(wave);
+      let mx = 0; for (let i = 0; i < 640; i++) mx = Math.max(mx, Math.abs(wave[i]));
+      if (mx > 0.002) {
+        g.strokeStyle = rgba(theme.air, 0.95); g.lineWidth = 1.5; g.beginPath();
+        const sc = 1 / Math.max(mx, 0.05);
+        for (let i = 0; i < 640; i++) {
+          const t = i / 639, y = (yU(t) + yL(t)) / 2 + wave[i] * sc * (yL(t) - yU(t)) * 0.38;
+          (i ? g.lineTo : g.moveTo).call(g, X(t), y);
+        }
+        g.stroke();
+      }
+    }
+    // handles
+    const tc = clamp(info.xc, 0.05, 0.98);
+    const hs = [
+      { id: 'tongue', x: X(tc), y: yL(tc), name: 'tongue' },
+      { id: 'lips', x: x1 + 2, y: yL(1) + H * 0.01, name: 'lips' },
+      { id: 'velum', x: X((tv0 + tv1) / 2), y: yU(tv0) - H * 0.07 + portH * 0.5, name: 'velum' },
+      { id: 'throat', x: X(0.24), y: yL(0.24), name: 'throat' },
+      { id: 'larynx', x: xs - 2, y: yg, name: 'larynx' }
+    ];
+    g.font = '10px JetBrains Mono, ui-monospace, monospace';
+    for (const h of hs) {
+      g.textAlign = h.id === 'larynx' ? 'left' : h.id === 'lips' ? 'right' : 'center'; g.fillStyle = theme.ink;
+      g.fillText(h.name, h.id === 'larynx' ? 6 : h.id === 'lips' ? W - 8 : h.x, h.id === 'velum' ? h.y - 16 : h.id === 'lips' ? h.y + 26 : h.id === 'larynx' ? h.y + 28 : h.y + 24);
+      g.beginPath(); g.arc(h.x, h.y, 9, 0, 7); g.fillStyle = rgba(theme.panel, 0.9); g.fill();
+      g.lineWidth = 2; g.strokeStyle = (drag && drag.id === h.id) ? theme.air : theme.ink; g.stroke();
+      g.beginPath(); g.arc(h.x, h.y, 3, 0, 7); g.fillStyle = (drag && drag.id === h.id) ? theme.air : theme.ink; g.fill();
+    }
+    G = { W, H, span, hs, tv: kk };
+    $('#lenLabel').textContent = cm.toFixed(1) + ' cm';
+  }
+
+  /* tract dragging */
+  let drag = null;
+  cT.addEventListener('pointerdown', (e) => {
+    if (!G) return;
+    const r = cT.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    let best = null, bd = 28;
+    for (const h of G.hs) { const d = Math.hypot(h.x - px, h.y - py); if (d < bd) { bd = d; best = h; } }
+    if (!best) return;
+    e.preventDefault(); try { cT.setPointerCapture(e.pointerId); } catch (_) {}
+    drag = { id: best.id, px, py, x: P.x, y: P.y, lips: P.lips, phar: P.phar, vel: P.vel, larynx: P.larynx, pid: e.pointerId };
+    tractDirty = true; startAudio();
+  });
+  cT.addEventListener('pointermove', (e) => {
+    const r = cT.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    if (!drag) { if (G) { let hit = false; for (const h of G.hs) if (Math.hypot(h.x - px, h.y - py) < 28) hit = true; cT.style.cursor = hit ? 'grab' : 'default'; } return; }
+    if (e.pointerId !== drag.pid) return;
+    const dx = px - drag.px, dy = py - drag.py, H = G.H;
+    switch (drag.id) {
+      case 'tongue': setP('x', clamp(drag.x + dx / (G.span * 0.76), 0, 1)); setP('y', clamp(drag.y + dy / (H * 0.3), 0, 1)); break;
+      case 'lips': setP('lips', clamp(drag.lips + dy / (H * 0.3), 0, 1)); break;
+      case 'velum': setP('vel', clamp(drag.vel - dy / (H * 0.12), 0, 1)); break;
+      case 'throat': setP('phar', clamp(drag.phar + dy / (H * 0.25), 0, 1)); break;
+      case 'larynx': setP('larynx', clamp(drag.larynx - dx / (G.W * 0.05), -1, 1)); break;
+    }
+  });
+  const endDrag = (e) => { if (drag && e.pointerId === drag.pid) { drag = null; tractDirty = true; } };
+  cT.addEventListener('pointerup', endDrag); cT.addEventListener('pointercancel', endDrag);
+
+  /* --- vowel pad --- */
+  const F1R = [240, 780], F2R = [2450, 640];
+  let padGeom = null, padDrag = null, padPt = null;
+  function padXY(f2, f1) { const { l, t, w, h } = padGeom; return [l + (F2R[0] - f2) / (F2R[0] - F2R[1]) * w, t + (f1 - F1R[0]) / (F1R[1] - F1R[0]) * h]; }
+  function drawPad() {
+    const { g, w: W, h: H } = fit(cP);
+    padGeom = { l: 14, t: 14, w: W - 26, h: H - 34 };
+    g.clearRect(0, 0, W, H);
+    // domain
+    g.beginPath();
+    const pts = [];
+    for (let i = 0; i <= 20; i++) { const v = i / 20; pts.push(padXY(E.padF2hi(v), E.padF1(v))); }
+    for (let i = 20; i >= 0; i--) { const v = i / 20; pts.push(padXY(E.padF2lo(v), E.padF1(v))); }
+    pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.closePath();
+    g.fillStyle = rgba(theme.air, 0.16); g.fill(); g.strokeStyle = rgba(theme.air, 0.6); g.lineWidth = 1.2; g.stroke();
+    // grid
+    g.strokeStyle = rgba(theme.muted, 0.18); g.lineWidth = 1;
+    for (let f = 500; f <= 2000; f += 500) { const p = padXY(f, F1R[0]), q = padXY(f, F1R[1]); g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke(); }
+    for (let f = 300; f <= 700; f += 200) { const p = padXY(F2R[0], f), q = padXY(F2R[1], f); g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke(); }
+    g.fillStyle = theme.muted; g.font = '10px JetBrains Mono, ui-monospace, monospace'; g.textAlign = 'center';
+    for (let f = 500; f <= 2000; f += 500) { const p = padXY(f, F1R[1]); g.fillText(f + '', p[0], H - 12); }
+    g.fillText('F2 Hz  (back ← → front)', padGeom.l + padGeom.w / 2, H - 1);
+    g.textAlign = 'left'; for (let f = 300; f <= 700; f += 200) { const p = padXY(F2R[0], f); g.fillText(f + '', p[0] + 2, p[1] - 3); }
+    // vowels
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '600 15px Instrument Sans, system-ui, sans-serif';
+    for (const v of E.VOWEL_ORDER) {
+      const f = E.VOWEL_FORMANTS[v], p = padXY(f[1], f[0]);
+      g.fillStyle = (v === targetName) ? theme.tissue : theme.ink; g.fillText(v, p[0], p[1]);
+    }
+    g.textBaseline = 'alphabetic';
+    // measured formants of the current mouth
+    if (formants.length > 1) {
+      const p = padXY(formants[1].f, formants[0].f);
+      g.strokeStyle = theme.tissue; g.lineWidth = 2; g.beginPath(); g.arc(p[0], p[1], 9, 0, 7); g.stroke();
+      g.beginPath(); g.moveTo(p[0] - 14, p[1]); g.lineTo(p[0] + 14, p[1]); g.moveTo(p[0], p[1] - 14); g.lineTo(p[0], p[1] + 14); g.stroke();
+    }
+  }
+  function padSet(e) {
+    if (!padGeom) drawPad();
+    const r = cP.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, { l, t, w, h } = padGeom;
+    const f2 = F2R[0] - (px - l) / w * (F2R[0] - F2R[1]), f1 = F1R[0] + (py - t) / h * (F1R[1] - F1R[0]);
+    const v = clamp((f1 - 280) / 460, 0, 1), lo = E.padF2lo(v), hi = E.padF2hi(v), u = clamp(1 - (f2 - lo) / (hi - lo), 0, 1);
+    const a = E.padArt(u, v);
+    setMany({ x: a.x, y: a.y, w: a.w, lips: a.lips, phar: a.phar });
+  }
+  cP.addEventListener('pointerdown', (e) => { e.preventDefault(); try { cP.setPointerCapture(e.pointerId); } catch (_) {} padDrag = e.pointerId; padSet(e); startAudio(); });
+  cP.addEventListener('pointermove', (e) => { if (padDrag === e.pointerId) padSet(e); });
+  const padEnd = (e) => { if (padDrag === e.pointerId) padDrag = null; };
+  cP.addEventListener('pointerup', padEnd); cP.addEventListener('pointercancel', padEnd);
+
+  /* --- spectrum --- */
+  const specBuf = new Float32Array(2048);
+  function drawSpec() {
+    const { g, w: W, h: H } = fit(cS);
+    g.clearRect(0, 0, W, H);
+    const L = 34, R = 8, T = 16, B = 20, pw = W - L - R, ph = H - T - B, FM = 5000;
+    const fx = (f) => L + f / FM * pw;
+    g.font = '10px JetBrains Mono, ui-monospace, monospace'; g.textAlign = 'center'; g.fillStyle = theme.muted; g.strokeStyle = rgba(theme.muted, 0.16); g.lineWidth = 1;
+    for (let k = 0; k <= 5; k++) { const x = fx(k * 1000); g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke(); g.fillText(k + (k ? 'k' : ''), x, H - 6); }
+    g.textAlign = 'right';
+    for (let d = -80; d <= 0; d += 20) { const y = T + ph * (-d / 90); g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke(); g.fillText(d + '', L - 4, y + 3); }
+    // live spectrum
+    let live = false;
+    if (JUCE ? !!pluginSpec : (analyser && mode !== 'off')) {
+      if (JUCE) { for (let i = 0; i < pluginSpec.length && i < specBuf.length; i++) specBuf[i] = pluginSpec[i]; } else analyser.getFloatFrequencyData(specBuf);
+      const df = JUCE ? pluginDf : sampleRateNow / 4096, nb = Math.min(JUCE ? pluginSpec.length - 1 : 2047, Math.floor(FM / df));
+      let mx = -200; for (let i = 2; i < nb; i++) if (specBuf[i] > mx) mx = specBuf[i];
+      if (mx > -90) {
+        live = true;
+        g.beginPath(); g.moveTo(L, T + ph);
+        for (let i = 1; i <= nb; i++) { const db = clamp(specBuf[i] - mx, -90, 0), x = fx(i * df), y = T + ph * (-db / 90); g.lineTo(x, y); }
+        g.lineTo(fx(nb * df), T + ph); g.closePath();
+        const gg = g.createLinearGradient(0, T, 0, T + ph); gg.addColorStop(0, rgba(theme.air, 0.6)); gg.addColorStop(1, rgba(theme.air, 0.05));
+        g.fillStyle = gg; g.fill();
+        g.strokeStyle = rgba(theme.air, 0.95); g.lineWidth = 1; g.beginPath();
+        for (let i = 1; i <= nb; i++) { const db = clamp(specBuf[i] - mx, -90, 0), x = fx(i * df), y = T + ph * (-db / 90); (i > 1 ? g.lineTo : g.moveTo).call(g, x, y); }
+        g.stroke();
+      }
+    }
+    // tract response curve (what the mouth does to any sound)
+    if (resp) {
+      let mx = 0; const nb = Math.floor(FM / resp.df);
+      for (let i = 2; i < nb; i++) if (resp.mag[i] > mx) mx = resp.mag[i];
+      g.strokeStyle = theme.tissue; g.lineWidth = 2; g.beginPath();
+      for (let i = 1; i < nb; i++) { const db = clamp(20 * Math.log10(resp.mag[i] / mx + 1e-9), -60, 0), x = fx(i * resp.df), y = T + ph * (-db / 90 * 0.9) + 2; (i > 1 ? g.lineTo : g.moveTo).call(g, x, y); }
+      g.stroke();
+      g.textAlign = 'center'; g.fillStyle = theme.tissue; g.setLineDash([3, 4]); g.lineWidth = 1;
+      formants.slice(0, 4).forEach((f, i) => { if (f.f > FM) return; const x = fx(f.f); g.beginPath(); g.moveTo(x, T + 12); g.lineTo(x, T + ph); g.strokeStyle = rgba(theme.tissue, 0.5); g.stroke(); g.fillText('F' + (i + 1) + ' ' + Math.round(f.f), clamp(x, L + 24, W - 30), T + 8); });
+      g.setLineDash([]);
+    }
+    if (!live) { g.textAlign = 'right'; g.fillStyle = theme.muted; g.fillText(mode === 'off' ? 'start audio and play a key to see the output' : 'play a key', L + pw, T + ph - 6); }
+  }
+
+  /* --- readout --- */
+  function drawReadout() {
+    const f = (i) => (formants[i] ? Math.round(formants[i].f) : '–');
+    $('#readout').innerHTML = '<span>F1 <b>' + f(0) + '</b></span><span>F2 <b>' + f(1) + '</b></span><span>F3 <b>' + f(2) + '</b></span><span>tract <b>' + viewLen().toFixed(1) + ' cm</b></span><span>' + (P.mono ? 'mono' : 'poly <b>' + P.voices + '</b>') + (P.mpe ? ' · MPE' : '') + '</span>';
+  }
+
+  /* --- envelope and LFO pictures --- */
+  function drawEnv(o) {
+    const { g, w: W, h: H } = fit(o.c);
+    g.clearRect(0, 0, W, H);
+    const a = P[o.a], d = P[o.d], s = P[o.s], r = P[o.r];
+    const hold = Math.max(150, (a + d) * 0.4), tot = a + d + hold + r;
+    const sx = (W - 16) / tot, x0 = 8, yb = H - 10, yt = 10, Y = (v) => yb - (yb - yt) * v;
+    g.strokeStyle = rgba(theme.muted, 0.25); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, yb); g.lineTo(W - 8, yb); g.stroke();
+    g.beginPath(); g.moveTo(x0, yb);
+    let x = x0 + a * sx; g.lineTo(x, Y(1));
+    for (let i = 1; i <= 24; i++) { const tt = i / 24; g.lineTo(x + d * sx * tt, Y(s + (1 - s) * Math.exp(-4 * tt))); }
+    x += d * sx; g.lineTo(x + hold * sx, Y(s)); x += hold * sx;
+    for (let i = 1; i <= 24; i++) { const tt = i / 24; g.lineTo(x + r * sx * tt, Y(s * Math.exp(-5 * tt))); }
+    g.lineTo(W - 8, yb);
+    g.lineTo(x0, yb); g.closePath();
+    g.fillStyle = rgba(theme.air, 0.16); g.fill();
+    g.strokeStyle = theme.air; g.lineWidth = 2; g.stroke();
+    if (o.loop && P[o.loop]) { g.fillStyle = theme.muted; g.font = '10px JetBrains Mono, ui-monospace, monospace'; g.textAlign = 'right'; g.fillText('loops A–D', W - 8, 14); }
+    const live = (o.i === 1 || o.i === 2) && tel && tel[0] >= 0 ? tel[11 + o.i - 1] : null;
+    if (live !== null) { const y = Y(clamp(live, 0, 1)); g.strokeStyle = theme.tissue; g.lineWidth = 1.5; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(x0, y); g.lineTo(W - 8, y); g.stroke(); g.setLineDash([]); }
+  }
+  function drawLfo(o) {
+    const { g, w: W, h: H } = fit(o.c);
+    g.clearRect(0, 0, W, H);
+    const shape = P[o.pre + 'shape'], amt = P[o.pre + 'amt'], ym = H / 2, A = (H / 2 - 10);
+    g.strokeStyle = rgba(theme.muted, 0.25); g.lineWidth = 1; g.beginPath(); g.moveTo(8, ym); g.lineTo(W - 8, ym); g.stroke();
+    const rv = [0.6, -0.4, 0.9, -0.8, 0.2, -0.1, 0.7, -0.6, 0.1];
+    g.strokeStyle = theme.air; g.lineWidth = 2; g.beginPath();
+    const cycles = 2;
+    for (let i = 0; i <= 240; i++) {
+      const u = i / 240 * cycles, k = Math.floor(u), ph = u - k;
+      let v;
+      switch (shape) {
+        case 0: v = Math.sin(2 * Math.PI * ph); break;
+        case 1: v = ph < 0.5 ? 4 * ph - 1 : 3 - 4 * ph; break;
+        case 2: v = 2 * ph - 1; break;
+        case 3: v = ph < 0.5 ? 1 : -1; break;
+        case 4: v = rv[(k * 3 + Math.floor(ph * 3)) % rv.length]; break;
+        default: { const a0 = rv[k % rv.length], a1 = rv[(k + 1) % rv.length], tt = ph * ph * (3 - 2 * ph); v = a0 + (a1 - a0) * tt; }
+      }
+      const x = 8 + (W - 16) * i / 240, y = ym - v * A * Math.max(amt, 0.04);
+      (i ? g.lineTo : g.moveTo).call(g, x, y);
+    }
+    g.stroke();
+    g.fillStyle = theme.muted; g.font = '10px JetBrains Mono, ui-monospace, monospace'; g.textAlign = 'right';
+    const rate = P[o.pre + 'sync'] ? E.LFO_DIV_NAMES[P[o.pre + 'div'] | 0] + ' @ ' + P.bpm + ' bpm' : P[o.pre + 'rate'].toFixed(2) + ' Hz';
+    g.fillText(rate, W - 8, 14);
+    const live = tel && tel[0] >= 0 ? tel[13 + o.i] : null;
+    if (live !== null) { const y = ym - clamp(live, -1, 1) * A; g.fillStyle = theme.tissue; g.beginPath(); g.arc(W - 14, y, 5, 0, 7); g.fill(); }
+  }
+
+  /* --- frame loop --- */
+  let lastFrame = 0, themeKey = '', lastSyl = -2, lastNext = -2;
+  function paintPhrase() {
+    const live = tel && tel[0] >= 0 ? tel[9] : -1;
+    const next = tel ? ((tel[10] | 0) + 1) % Math.max(1, stripEls.length) : 0;
+    if (live === lastSyl && next === lastNext) return;
+    lastSyl = live; lastNext = next;
+    stripEls.forEach((e, i) => { e.classList.toggle('now', i === live); e.classList.toggle('next', live < 0 && i === next); });
+    sylEls.forEach((e, i) => e.classList.toggle('now', i === live));
+  }
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    const live = mode !== 'off';
+    ts = performance.now();
+    if (ts - lastFrame < (live ? 28 : 60)) return;
+    lastFrame = ts;
+    const tk = document.documentElement.getAttribute('data-theme') + '|' + (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    if (tk !== themeKey) { themeKey = tk; readTheme(); tractDirty = true; respDirty = true; }
+    if (liveOn()) respDirty = true;
+    if (respDirty && ts - respAt > 70) { updateResp(); drawReadout(); tractDirty = true; }
+    if (tractDirty || live) { drawTract(); }
+    drawPad(); drawSpec();
+    tractDirty = false;
+    if (curTab === 'env') envCanv.forEach(drawEnv);
+    if (curTab === 'lfo') lfoCanv.forEach(drawLfo);
+    if (curTab === 'matrix' && tel) for (let i = 0; i < srcMeters.length; i++) {
+      const v = tel[0] >= 0 ? clamp(tel[11 + i], -1, 1) : 0;
+      srcMeters[i].style.left = (v >= 0 ? 50 : 50 + v * 50) + '%'; srcMeters[i].style.width = Math.abs(v) * 50 + '%';
+    }
+    if (P.phOn || curTab === 'phrase') paintPhrase();
+    const m = $('#meter'); m.style.width = Math.round(clamp(lastPk, 0, 1) * 100) + '%'; lastPk *= 0.6;
+    if (live) $('#vcount').textContent = voiceCount;
+  }
+  /* plugin: get the saved state from the host, then stream meters and automation */
+  function applyRemote(k, v) {
+    if (!(k in P) || P[k] === v) return;
+    P[k] = v; (ctls[k] || []).forEach((r) => r.sync(v));
+    respDirty = true; tractDirty = true;
+    if (k === 'phOn') $('#phStrip').hidden = !v;
+    if (k === 'l1sync' || k === 'l2sync') syncLfoRows();
+  }
+  if (JUCE) {
+    JUCE.addEventListener('state', (s) => {
+      if (s && s.P) for (const k in s.P) applyRemote(k, s.P[k]);
+      if (s && Array.isArray(s.mods) && s.mods.length === mods.length) { for (let i = 0; i < mods.length; i++) { mods[i] = s.mods[i]; paintCell(i); } }
+      const txt = s && s.text ? s.text : DEFAULT_TEXT;
+      $('#phraseText').value = txt; setPhraseText(txt);
+      markTarget(targetFromP());
+    });
+    JUCE.addEventListener('tel', (d) => {
+      if (!d) return;
+      tel = d.tel; lastPk = Math.max(lastPk, d.pk || 0); voiceCount = d.v || 0;
+      if (d.params) for (const k in d.params) applyRemote(k, d.params[k]);
+      if (d.wave) pluginWave = d.wave;
+      if (d.spec) { pluginSpec = d.spec; pluginDf = d.df || pluginDf; }
+    });
+    setTimeout(() => JUCE.emitEvent('vts', { t: 'ready' }), 50);
+  }
+  readTheme();
+  restore();
+  for (const k in ctls) ctls[k].forEach((r) => r.sync(P[k]));
+  for (let i = 0; i < mods.length; i++) paintCell(i);
+  syncLfoRows();
+  setPhraseText(phraseText);
+  $('#phStrip').hidden = !P.phOn;
+  if (!(P.x !== D.x || P.y !== D.y)) { applyVowel('ɑ'); }
+  markTarget(targetFromP());
+  updateResp(); drawReadout();
+  requestAnimationFrame(frame);
+  if (window.ResizeObserver) { const ro = new ResizeObserver(() => { tractDirty = true; }); [cT, cP, cS].forEach((c) => ro.observe(c)); }
+  function targetFromP() {
+    let best = 'i', bd = 1e9;
+    for (const v of E.VOWEL_ORDER) { const a = E.vowelArt(v); const d = Math.abs(a.x - P.bx) + Math.abs(a.y - P.by) + Math.abs(a.lips - P.blips); if (d < bd) { bd = d; best = v; } }
+    return bd < 0.05 ? best : '';
+  }
+})();
+</script>
+
+</body>
+</html>
